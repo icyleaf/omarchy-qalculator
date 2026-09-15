@@ -172,4 +172,78 @@ TestCase {
     compare(CalcModel.historyIndexForKey(Qt.Key_0), 9)
     compare(CalcModel.historyShortcutLabel(9), "⌃0")
   }
+
+  // ── Dependencies ─────────────────────────────────────────────────────────
+
+  function test_dependenciesAreWellFormed() {
+    var deps = CalcModel.DEPENDENCIES
+    verify(deps.length > 0)
+    for (var i = 0; i < deps.length; i++) {
+      verify(deps[i].bin.length > 0)
+      verify(deps[i].pkg.length > 0)
+      verify(deps[i].feature.length > 0)
+    }
+  }
+
+  function test_missingDependenciesOnlyCountsMissing() {
+    var states = { "qalc": "available", "wl-copy": "missing" }
+    var missing = CalcModel.missingDependencies(states)
+    compare(missing.length, 1)
+    compare(missing[0].bin, "wl-copy")
+  }
+
+  function test_missingDependenciesIgnoresChecking() {
+    // A probe still in flight must not flash the notice.
+    var states = { "qalc": "checking", "wl-copy": "checking" }
+    compare(CalcModel.missingDependencies(states).length, 0)
+  }
+
+  function test_missingDependenciesHandlesEmptyAndNull() {
+    compare(CalcModel.missingDependencies({}).length, 0)
+    compare(CalcModel.missingDependencies(null).length, 0)
+  }
+
+  function test_dependencyAvailableIsExact() {
+    var states = { "qalc": "available", "wl-copy": "missing" }
+    compare(CalcModel.dependencyAvailable(states, "qalc"), true)
+    compare(CalcModel.dependencyAvailable(states, "wl-copy"), false)
+    compare(CalcModel.dependencyAvailable(states, "nope"), false)
+    compare(CalcModel.dependencyAvailable(null, "qalc"), false)
+  }
+
+  function test_missingPackagesMapsAndDeduplicates() {
+    var missing = [
+      { bin: "qalc", pkg: "libqalculate" },
+      { bin: "qalc", pkg: "libqalculate" },
+      { bin: "wl-copy", pkg: "wl-clipboard" }
+    ]
+    var pkgs = CalcModel.missingPackages(missing)
+    compare(pkgs.length, 2)
+    compare(pkgs[0], "libqalculate")
+    compare(pkgs[1], "wl-clipboard")
+    compare(CalcModel.missingPackages([]).length, 0)
+    compare(CalcModel.missingPackages(null).length, 0)
+  }
+
+  function test_installCommandListsPackages() {
+    var missing = [
+      { bin: "qalc", pkg: "libqalculate" },
+      { bin: "wl-copy", pkg: "wl-clipboard" }
+    ]
+    compare(CalcModel.installCommand(missing), "omarchy pkg add libqalculate wl-clipboard")
+    compare(CalcModel.installCommand([]), "")
+    compare(CalcModel.installCommand(null), "")
+  }
+
+  function test_dependencyNoticeNamesBinsAndPackages() {
+    var missing = [
+      { bin: "qalc", pkg: "libqalculate" },
+      { bin: "wl-copy", pkg: "wl-clipboard" }
+    ]
+    var notice = CalcModel.dependencyNotice(missing)
+    verify(notice.indexOf("qalc (libqalculate)") !== -1)
+    verify(notice.indexOf("wl-copy (wl-clipboard)") !== -1)
+    compare(CalcModel.dependencyNotice([]), "")
+    compare(CalcModel.dependencyNotice(null), "")
+  }
 }

@@ -147,6 +147,62 @@ function addHistoryEntry(entries, entry, limit) {
   return capHistory(out, limit)
 }
 
+// ── Dependencies ────────────────────────────────────────────────────────────
+
+// Every external command the overlay shells out to, paired with the Arch
+// package that provides it. The binary is what we actually probe (its
+// presence on PATH is the truth); the package name is only what we hand to
+// the installer. Both live in `extra`, so a plain `pacman -S` suffices.
+var DEPENDENCIES = [
+  { bin: "qalc", pkg: "libqalculate", feature: "live evaluation" },
+  { bin: "wl-copy", pkg: "wl-clipboard", feature: "copy" }
+]
+
+// `states` maps a dependency's bin to one of "checking", "available" or
+// "missing". Only "missing" counts: a probe still in flight must not flash the
+// "not found" notice, and an available tool must not either.
+function missingDependencies(states) {
+  if (!states) return []
+  var out = []
+  for (var i = 0; i < DEPENDENCIES.length; i++) {
+    var dep = DEPENDENCIES[i]
+    if (states[dep.bin] === "missing") out.push(dep)
+  }
+  return out
+}
+
+function dependencyAvailable(states, bin) {
+  return !!states && states[bin] === "available"
+}
+
+// Unique provider packages, in declaration order, for the missing tools.
+function missingPackages(missing) {
+  var out = []
+  if (!Array.isArray(missing)) return out
+  for (var i = 0; i < missing.length; i++) {
+    var pkg = missing[i] && missing[i].pkg
+    if (pkg && out.indexOf(pkg) === -1) out.push(pkg)
+  }
+  return out
+}
+
+// One-click install: Omarchy's own package helper in a floating presentation
+// terminal. Returns "" when nothing is missing, so callers can no-op.
+function installCommand(missing) {
+  var pkgs = missingPackages(missing)
+  if (pkgs.length === 0) return ""
+  return "omarchy pkg add " + pkgs.join(" ")
+}
+
+function dependencyNotice(missing) {
+  if (!missing || missing.length === 0) return ""
+  var parts = []
+  for (var i = 0; i < missing.length; i++) {
+    parts.push(missing[i].bin + " (" + missing[i].pkg + ")")
+  }
+  return "Missing: " + parts.join(", ") + " — click to install"
+}
+
 // ── Evaluation gate ─────────────────────────────────────────────────────────
 
 // True when the qalc output is a real answer for the current input rather than

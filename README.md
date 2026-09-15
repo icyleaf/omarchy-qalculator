@@ -12,7 +12,7 @@ A Raycast-style quick calculator overlay for [Omarchy](https://github.com/omarch
 - **Persistent history** — the last 50 successful expressions, newest first, at `~/.local/state/omarchy/qalculator-history.json`. With an empty input the history list shows; `↑`/`↓` browse it, `Ctrl+1`…`Ctrl+9`/`Ctrl+0` copy rows 1–10 directly, and `Enter` copies a highlighted entry. Re-computing an expression moves it to the top instead of duplicating it.
 - **Built-in help** — `Ctrl+/` swaps the history area for a syntax reference (math, percent, conversions, currency, keys), and swaps back. The help content lives in `CalcModel.js`, so it is covered by the test suite.
 - **Focused-monitor overlay** — a fullscreen `PanelWindow` on the focused output, matching the emojis and clipboard overlays.
-- **No qalc?** — the card says so instead of failing silently. Nothing else degrades.
+- **Missing dependencies?** — each external tool (`qalc`, `wl-copy`) is probed at startup. The card names what is missing and offers a one-click install instead of failing silently.
 
 ## Usage
 
@@ -49,6 +49,8 @@ Note that `SUPER + =` is delivered as `code:21` (the `=` key without Shift), and
 
 - `qalc` (Arch: the `libqalculate` package) on `PATH`. Currency conversion uses qalc's cached rates; no network call is made by this plugin.
 - Wayland clipboard tooling (`wl-copy`, part of `wl-clipboard`) for the copy action.
+
+Both are checked once at load by probing `which` for each binary. If either is missing, the overlay shows a notice naming the binary and its package; clicking it runs `omarchy pkg add libqalculate wl-clipboard` in a floating terminal and re-probes once that terminal closes. Everything else keeps working: a missing `qalc` disables live evaluation, a missing `wl-copy` disables copy (no false "Copied" confirmation).
 
 ## Architecture
 

@@ -18,7 +18,11 @@ Item {
   property string expression: ""
   property string result: ""
   property bool resultVisible: false
-  property bool qalcAvailable: true
+  // Maps each dependency bin to "checking", "available" or "missing". Empty
+  // until the first probe finishes, so nothing flashes on load.
+  property var dependencyStates: ({})
+  property int probeIndex: 0
+  property bool installingDependencies: false
   property bool copied: false
   property var history: []
   property int historyIndex: -1
@@ -59,10 +63,13 @@ Item {
   readonly property int helpRows: CalcModel.helpRowCount()
   readonly property int helpHeight: helpRows * helpLineHeight
   readonly property var helpSections: CalcModel.helpSections()
+  readonly property var missingDeps: CalcModel.missingDependencies(dependencyStates)
+  readonly property bool depsMissing: missingDeps.length > 0
+  readonly property string dependencyNotice: CalcModel.dependencyNotice(missingDeps)
   // Tallest a lower section may grow before it starts scrolling.
   readonly property int maxSectionHeight: Math.max(
     Style.space(60),
-    panel.height - Style.gapsOut * 2 - contentMargin * 2 - inputHeight - contentSpacing - (qalcAvailable ? 0 : noticeHeight + contentSpacing))
+    panel.height - Style.gapsOut * 2 - contentMargin * 2 - inputHeight - contentSpacing - (depsMissing ? noticeHeight + contentSpacing : 0))
   readonly property int panelHeight: Math.max(
     Style.space(80),
     Math.min(
@@ -70,7 +77,7 @@ Item {
         + (showHistory ? historyHeight : 0)
         + (showHelp ? Math.min(helpHeight, maxSectionHeight) : 0)
         + (showHint ? hintHeight : 0)
-        + (qalcAvailable ? 0 : noticeHeight + contentSpacing),
+        + (depsMissing ? noticeHeight + contentSpacing : 0),
       panel.height - Style.gapsOut * 2))
   readonly property int cardHeight: Math.min(panelHeight, panel.height - Style.gapsOut * 2)
 
@@ -82,6 +89,9 @@ Item {
     root.copied = false
     root.historyIndex = -1
     root.helpVisible = false
+    // Cheap recheck: only re-probe what was known to be missing, so a tool
+    // installed while the overlay was closed is picked up on the next summon.
+    if (root.depsMissing) root.checkDependencies()
     // TextField.text is set imperatively: a QML binding would be broken the
     // moment the user types, and then stop resetting on the next open.
     Qt.callLater(function() {
@@ -92,6 +102,53 @@ Item {
 
   function close() {
     root.opened = false
+  }
+
+  // ── Dependencies ──────────────────────────────────────────────────────────
+
+  // Probe every declared binary with `which`, one Process reused sequentially,
+  // driven by CalcModel.DEPENDENCIES so the probe list and the notice/install
+  // list can never drift apart. Exit code is locale-independent, unlike GNU
+  // which's translated "not found" message, so we never parse output. A
+  // dependency reads as "missing" only once its probe says so; until then it
+  // stays "checking" and the notice stays hidden.
+  function checkDependencies() {
+    var next = {}
+    for (var i = 0; i < CalcModel.DEPENDENCIES.length; i++) {
+      next[CalcModel.DEPENDENCIES[i].bin] = "checking"
+    }
+    root.dependencyStates = next
+    root.probeIndex = 0
+    root.runProbe()
+  }
+
+  function runProbe() {
+    if (root.probeIndex >= CalcModel.DEPENDENCIES.length) return
+    var dep = CalcModel.DEPENDENCIES[root.probeIndex]
+    probeProc.probeBin = dep.bin
+    probeProc.command = ["which", "--", dep.bin]
+    probeProc.running = false
+    probeProc.running = true
+  }
+
+  function setDependencyState(bin, available) {
+    var next = {}
+    for (var key in root.dependencyStates) next[key] = root.dependencyStates[key]
+    next[bin] = available ? "available" : "missing"
+    root.dependencyStates = next
+  }
+
+  // Install every missing provider package in one floating terminal. The
+  // launcher detaches (setsid), so its Process exits before pacman finishes;
+  // the re-probe here is best-effort, and the reliable pickup is the recheck
+  // in open() once the user summons the overlay again.
+  function installDependencies() {
+    if (root.installingDependencies) return
+    var cmd = CalcModel.installCommand(root.missingDeps)
+    if (!cmd) return
+    root.installingDependencies = true
+    installProc.command = ["omarchy-launch-floating-terminal-with-presentation", cmd]
+    installProc.running = true
   }
 
   function dismiss() {
@@ -145,6 +202,9 @@ Item {
 
   function copyResult(value) {
     if (!value) return
+    // No wl-copy means no clipboard. Do not claim success: the notice already
+    // tells the user what is missing.
+    if (!CalcModel.dependencyAvailable(root.dependencyStates, "wl-copy")) return
     // argv form, not stdin: wl-copy exits once it has forked the owner, while
     // piping keeps this Process alive for as long as the selection lives.
     clipProc.command = ["wl-copy", "--type", "text/plain", "--", String(value)]
@@ -199,7 +259,7 @@ Item {
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
-  Component.onCompleted: qalcCheckProc.running = true
+  Component.onCompleted: root.checkDependencies()
 
   FileView {
     id: historyFile
@@ -211,10 +271,27 @@ Item {
   }
 
   Process {
-    id: qalcCheckProc
-    command: ["which", "qalc"]
+    id: probeProc
+    property string probeBin: ""
+    command: []
     stdout: StdioCollector { waitForEnd: true }
-    onExited: function(code) { root.qalcAvailable = (code === 0) }
+    onExited: function(code) {
+      root.setDependencyState(probeBin, code === 0)
+      root.probeIndex = root.probeIndex + 1
+      root.runProbe()
+    }
+  }
+
+  Process {
+    id: installProc
+    command: []
+    onExited: function(code) {
+      // The floating terminal is detached, so this fires almost immediately and
+      // is not proof the install landed. Keep the click from being re-entrant
+      // and let open()/recheck confirm later.
+      root.installingDependencies = false
+      root.checkDependencies()
+    }
   }
 
   Process {
@@ -239,7 +316,7 @@ Item {
     interval: root.debounceMs
     repeat: false
     onTriggered: {
-      if (!root.qalcAvailable) return
+      if (!CalcModel.dependencyAvailable(root.dependencyStates, "qalc")) return
       if (root.expression.trim() === "") return
       evalProc.command = ["qalc", "-t", "--", root.expression]
       evalProc.running = true
@@ -352,16 +429,33 @@ Item {
           }
         }
 
-        Text {
+        Rectangle {
           width: parent.width
           height: root.noticeHeight
-          visible: !root.qalcAvailable
-          text: "qalc not found — install libqalculate"
-          color: Color.urgent
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          verticalAlignment: Text.AlignVCenter
-          elide: Text.ElideRight
+          visible: root.depsMissing
+          radius: Style.cornerRadius
+          color: root.installingDependencies ? root.selectedBackground : "transparent"
+
+          Text {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            leftPadding: Style.spacing.sm
+            rightPadding: Style.spacing.sm
+            text: root.installingDependencies ? "Installing in a floating terminal…" : root.dependencyNotice
+            color: Color.urgent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+          }
+
+          MouseArea {
+            anchors.fill: parent
+            enabled: !root.installingDependencies
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.installDependencies()
+          }
         }
 
         Flickable {
@@ -519,7 +613,7 @@ Item {
           width: parent.width
           height: root.hintHeight
           visible: root.showHint
-          text: root.qalcAvailable ? "Ctrl+/ for help  ·  try  2+2  ·  10 usd to gbp" : ""
+          text: root.depsMissing ? "" : "Ctrl+/ for help  ·  try  2+2  ·  10 usd to gbp"
           color: root.foreground
           opacity: 0.58
           font.family: root.fontFamily
