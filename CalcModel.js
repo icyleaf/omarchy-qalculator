@@ -7,6 +7,71 @@
 
 var HISTORY_LIMIT = 50
 
+// Caps for anything that came from outside this file: user keystrokes, a qalc
+// result, or the history document on disk. The overlay renders every one of
+// them, so the limit lives here, before the value reaches a Text or is written
+// back. Entries longer than these are rejected rather than truncated, so a
+// history document can never be reshaped into a plausible-looking lie.
+var EXPRESSION_MAX = 512
+var RESULT_MAX = 512
+
+// Hard ceiling on the history document itself, read and written. 50 entries of
+// 512+512 characters is well under this; the cap exists so a planted oversized
+// file is rejected instead of materialised, and so the reader can detect
+// overflow (it reads cap + 1 bytes).
+var HISTORY_BYTES_MAX = 65536
+
+// ── State paths ─────────────────────────────────────────────────────────────
+
+// The plugin owns one directory under the Omarchy state root. Omarchy's own
+// state directory is shared and world-traversable, so the plugin's files live
+// in a child it can hold at 0700 and whose contents it can safely repair.
+// XDG_STATE_HOME is honoured; when unset the spec default is $HOME/.local/state.
+// There is deliberately no /tmp fallback: an unwritable state directory must
+// fail closed, not relocate the history to a predictable shared path.
+function stateDir(home, xdgStateHome) {
+  var base = xdgStateHome && String(xdgStateHome).length > 0
+    ? String(xdgStateHome)
+    : String(home || "") + "/.local/state"
+  return base + "/omarchy/qalculator"
+}
+
+function historyFile(stateDirPath) {
+  return String(stateDirPath) + "/history.json"
+}
+
+// Previous single-file location, kept only so the first run on the new layout
+// can carry an existing history over. Nothing writes here after migration.
+function legacyHistoryFile(home, xdgStateHome) {
+  var base = xdgStateHome && String(xdgStateHome).length > 0
+    ? String(xdgStateHome)
+    : String(home || "") + "/.local/state"
+  return base + "/omarchy/qalculator-history.json"
+}
+
+// Invisible characters that would desynchronise rendering or sneak a bidi
+// reorder into a result: C0 (minus tab), C1, line/paragraph separators and the
+// Unicode bidi controls. Everything a qalc answer legitimately contains (√ − ≈
+// µ ° etc.) is a visible character and is kept.
+var CONTROL_CHARS = /[\u0000-\u0008\u000A-\u001F\u007F-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069]/g
+
+// ── Text hygiene ────────────────────────────────────────────────────────────
+
+function sanitizeText(value) {
+  var text = value === undefined || value === null ? "" : String(value)
+  return text.replace(CONTROL_CHARS, "")
+}
+
+// Display-and-store form: no control characters, no leading/trailing blanks.
+// The caller decides the length policy (reject or truncate) from here.
+function cleanText(value) {
+  return sanitizeText(value).trim()
+}
+
+function withinLength(text, maxLength) {
+  return String(text).length <= maxLength
+}
+
 // ── Help ────────────────────────────────────────────────────────────────────
 
 // Every example below was checked against the installed qalc. Keep them in
@@ -105,7 +170,9 @@ function parseHistory(raw) {
   if (!Array.isArray(parsed)) return []
 
   var out = []
-  for (var i = 0; i < parsed.length; i++) {
+  // Stop at the limit: a corrupt or hostile document must not materialise tens
+  // of thousands of rows into the list model.
+  for (var i = 0; i < parsed.length && out.length < HISTORY_LIMIT; i++) {
     var entry = normalizeEntry(parsed[i])
     if (entry) out.push(entry)
   }
@@ -114,9 +181,11 @@ function parseHistory(raw) {
 
 function normalizeEntry(value) {
   if (!value || typeof value !== "object") return null
-  var expression = String(value.expression === undefined ? value.expr || "" : value.expression).trim()
-  var result = String(value.result === undefined ? "" : value.result).trim()
+  var expression = cleanText(value.expression === undefined ? value.expr || "" : value.expression)
+  var result = cleanText(value.result === undefined ? "" : value.result)
   if (!expression || !result) return null
+  if (!withinLength(expression, EXPRESSION_MAX)) return null
+  if (!withinLength(result, RESULT_MAX)) return null
   return { expression: expression, result: result }
 }
 
@@ -150,12 +219,13 @@ function addHistoryEntry(entries, entry, limit) {
 // ── Dependencies ────────────────────────────────────────────────────────────
 
 // Every external command the overlay shells out to, paired with the Arch
-// package that provides it. The binary is what we actually probe (its
-// presence on PATH is the truth); the package name is only what we hand to
-// the installer. Both live in `extra`, so a plain `pacman -S` suffices.
+// package that provides it. `path` is the absolute location the plugin will
+// execute, so nothing is ever resolved through PATH; `bin` is the bare name
+// used as the state key and in the notice. The package name is only what we
+// hand to the installer. Both live in `extra`, so a plain `pacman -S` suffices.
 var DEPENDENCIES = [
-  { bin: "qalc", pkg: "libqalculate", feature: "live evaluation" },
-  { bin: "wl-copy", pkg: "wl-clipboard", feature: "copy" }
+  { bin: "qalc", path: "/usr/bin/qalc", pkg: "libqalculate", feature: "live evaluation" },
+  { bin: "wl-copy", path: "/usr/bin/wl-copy", pkg: "wl-clipboard", feature: "copy" }
 ]
 
 // `states` maps a dependency's bin to one of "checking", "available" or
@@ -175,13 +245,27 @@ function dependencyAvailable(states, bin) {
   return !!states && states[bin] === "available"
 }
 
+// Absolute path of the executable for a dependency bin, or "" when the bin is
+// not one we declared. Callers pass this straight into an argv array.
+function dependencyPath(bin) {
+  for (var i = 0; i < DEPENDENCIES.length; i++) {
+    if (DEPENDENCIES[i].bin === bin) return DEPENDENCIES[i].path
+  }
+  return ""
+}
+
 // Unique provider packages, in declaration order, for the missing tools.
+// Names that do not look like an Arch package are dropped: the launcher runs
+// the string through a shell, so nothing but a bare package token may reach it.
+var PACKAGE_PATTERN = /^[a-z0-9][a-z0-9@._+-]{0,63}$/
+
 function missingPackages(missing) {
   var out = []
   if (!Array.isArray(missing)) return out
   for (var i = 0; i < missing.length; i++) {
     var pkg = missing[i] && missing[i].pkg
-    if (pkg && out.indexOf(pkg) === -1) out.push(pkg)
+    if (!pkg || !PACKAGE_PATTERN.test(pkg)) continue
+    if (out.indexOf(pkg) === -1) out.push(pkg)
   }
   return out
 }
@@ -227,9 +311,10 @@ function hasIncompleteEnding(expr) {
 }
 
 // qalc -t prints the bare answer, but guard against a stray leading `= ` or a
-// trailing interactive prompt if a future version changes its output.
+// trailing interactive prompt if a future version changes its output, and strip
+// invisible characters so a crafted result cannot desync rendering.
 function cleanResult(output) {
-  var text = String(output === undefined || output === null ? "" : output)
+  var text = sanitizeText(output)
   text = text.replace(/\r/g, "").trim()
   if (text.charAt(0) === "=") text = text.slice(1).trim()
   text = text.replace(/>\s*$/, "").trim()

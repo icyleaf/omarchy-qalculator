@@ -28,6 +28,48 @@ Item {
   property int historyIndex: -1
   property bool helpVisible: false
 
+  // ── Output and process bounds ─────────────────────────────────────────────
+  // A child is never allowed to retain output in the shared shell process
+  // without a ceiling. qalc answers are tiny; anything larger is either a
+  // pathological expression or a sign the child is not qalc, and is dropped
+  // rather than rendered.
+  readonly property int outputLimit: 4096
+  property string evalBuffer: ""
+  property bool evalOverflow: false
+  readonly property int probeTimeoutMs: 2000
+  readonly property int evalTimeoutMs: 5000
+  readonly property int historyTimeoutMs: 3000
+  readonly property int killGraceMs: 1500
+
+  // Absolute interpreter locations. The plugin never resolves an executable
+  // through PATH, so a shadowed binary earlier in PATH cannot be reached.
+  readonly property string shBin: "/usr/bin/sh"
+  readonly property string testBin: "/usr/bin/test"
+
+  // Minimal environment for a probe: a fixed PATH, nothing inherited.
+  readonly property var probeEnvironment: ({
+    "PATH": "/usr/bin:/bin",
+    "LC_ALL": "C"
+  })
+
+  // qalc keeps its cached exchange rates under the XDG data/config roots, so it
+  // needs HOME and the XDG overrides to find them, but nothing else.
+  readonly property var qalcEnvironment: ({
+    "HOME": Quickshell.env("HOME") || "",
+    "PATH": "/usr/bin:/bin",
+    "XDG_DATA_HOME": Quickshell.env("XDG_DATA_HOME") || (Quickshell.env("HOME") || "") + "/.local/share",
+    "XDG_CONFIG_HOME": Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") || "") + "/.config",
+    "LC_ALL": "C.UTF-8"
+  })
+
+  // wl-copy is a Wayland client: it needs the compositor socket and runtime
+  // directory, and nothing else.
+  readonly property var clipboardEnvironment: ({
+    "WAYLAND_DISPLAY": Quickshell.env("WAYLAND_DISPLAY") || "wayland-1",
+    "XDG_RUNTIME_DIR": Quickshell.env("XDG_RUNTIME_DIR") || "",
+    "PATH": "/usr/bin:/bin"
+  })
+
   // Shares the [menu] surface tokens — themes that style the menu also style
   // the calculator, matching the emojis and clipboard overlays.
   property color background: Color.menu.background
@@ -49,8 +91,16 @@ Item {
   property int shortcutSlotWidth: Math.max(Style.space(26), Style.font.body + Style.spacing.md * 2)
   property int historyLimit: CalcModel.HISTORY_LIMIT
   property int debounceMs: 150
+  // Mirrors CalcModel.EXPRESSION_MAX so the TextField stops accepting input at
+  // the same bound the model enforces.
+  readonly property int expressionLimit: CalcModel.EXPRESSION_MAX
 
-  readonly property string historyPath: Quickshell.env("HOME") + "/.local/state/omarchy/qalculator-history.json"
+  readonly property string stateDir: CalcModel.stateDir(Quickshell.env("HOME"), Quickshell.env("XDG_STATE_HOME"))
+  readonly property string historyPath: CalcModel.historyFile(stateDir)
+  readonly property string legacyHistoryPath: CalcModel.legacyHistoryFile(Quickshell.env("HOME"), Quickshell.env("XDG_STATE_HOME"))
+  readonly property int historyBytesMax: CalcModel.HISTORY_BYTES_MAX
+  property bool historyMigrated: false
+  property bool pendingLegacyRemoval: false
   readonly property bool inputEmpty: expression.trim() === ""
   readonly property bool showHistory: inputEmpty && history.length > 0 && !helpVisible
   readonly property bool showHelp: inputEmpty && helpVisible
@@ -106,12 +156,14 @@ Item {
 
   // ── Dependencies ──────────────────────────────────────────────────────────
 
-  // Probe every declared binary with `which`, one Process reused sequentially,
-  // driven by CalcModel.DEPENDENCIES so the probe list and the notice/install
-  // list can never drift apart. Exit code is locale-independent, unlike GNU
-  // which's translated "not found" message, so we never parse output. A
-  // dependency reads as "missing" only once its probe says so; until then it
-  // stays "checking" and the notice stays hidden.
+  // Probe every declared binary, one Process reused sequentially, driven by
+  // CalcModel.DEPENDENCIES so the probe list and the notice/install list can
+  // never drift apart. The probe is `test -x` on the absolute path with a
+  // constructed environment, so it neither resolves through PATH nor inherits
+  // one. Exit code is locale-independent, unlike a translated "not found"
+  // message, so we never parse output. A dependency reads as "missing" only
+  // once its probe says so; until then it stays "checking" and the notice
+  // stays hidden.
   function checkDependencies() {
     var next = {}
     for (var i = 0; i < CalcModel.DEPENDENCIES.length; i++) {
@@ -126,7 +178,7 @@ Item {
     if (root.probeIndex >= CalcModel.DEPENDENCIES.length) return
     var dep = CalcModel.DEPENDENCIES[root.probeIndex]
     probeProc.probeBin = dep.bin
-    probeProc.command = ["which", "--", dep.bin]
+    probeProc.command = [root.testBin, "-x", dep.path]
     probeProc.running = false
     probeProc.running = true
   }
@@ -138,16 +190,18 @@ Item {
     root.dependencyStates = next
   }
 
-  // Install every missing provider package in one floating terminal. The
-  // launcher detaches (setsid), so its Process exits before pacman finishes;
-  // the re-probe here is best-effort, and the reliable pickup is the recheck
-  // in open() once the user summons the overlay again.
+  // Install every missing provider package in one floating terminal, via the
+  // absolute Omarchy launcher (never a PATH lookup). The launcher detaches
+  // (setsid), so its Process exits before pacman finishes; the re-probe here is
+  // best-effort, and the reliable pickup is the recheck in open() once the user
+  // summons the overlay again.
   function installDependencies() {
     if (root.installingDependencies) return
     var cmd = CalcModel.installCommand(root.missingDeps)
     if (!cmd) return
+    if (!root.omarchyPath) return
     root.installingDependencies = true
-    installProc.command = ["omarchy-launch-floating-terminal-with-presentation", cmd]
+    installProc.command = [root.omarchyPath + "/bin/omarchy-launch-floating-terminal-with-presentation", cmd]
     installProc.running = true
   }
 
@@ -163,13 +217,94 @@ Item {
   }
 
   // ── History persistence ───────────────────────────────────────────────────
+  //
+  // Reads and writes go through `Process`, not `FileView`. FileView follows a
+  // symlink planted at the path, blocks the whole shell process on a FIFO, and
+  // has no size ceiling; a descriptor-bound child avoids all three. Both
+  // helpers work on a path passed as an argument and data passed on stdin, and
+  // the script text is a constant — no value from QML is ever spliced into it.
 
   function loadHistory(raw) {
     root.history = CalcModel.parseHistory(raw)
   }
 
+  function readHistory() {
+    historyReadProc.buffer = ""
+    historyReadProc.overflow = false
+    historyReadProc.command = [
+      "/usr/bin/dd", "if=" + root.historyPath,
+      "iflag=nofollow,nonblock,count_bytes,fullblock",
+      "bs=1", "count=" + (root.historyBytesMax + 1), "status=none"
+    ]
+    historyReadProc.running = true
+  }
+
+  // A reader that fails is "no history yet", never "delete what is there". A
+  // missing file (rc != 0) leaves the list empty, and an oversized file is
+  // dropped rather than parsed, because a truncated document is not a valid one.
+  function historyLoaded(code) {
+    root.loadHistory(code === 0 && !historyReadProc.overflow ? historyReadProc.buffer : "[]")
+    historyReadProc.buffer = ""
+    if (!root.historyMigrated) root.migrateLegacyHistory()
+  }
+
   function saveHistory() {
-    historyFile.setText(CalcModel.serializeHistory(root.history))
+    historyWriteProc.payload = CalcModel.serializeHistory(root.history)
+    historyWriteProc.command = [
+      "/usr/bin/sh", "-c",
+      // umask first so mktemp creates 0600; refuse a symlinked directory;
+      // repair the directory and drop non-regular entries it may contain;
+      // write through a fresh same-directory temporary and rename over the
+      // destination so a planted symlink is replaced, never followed.
+      'umask 077; dir="$1"; dest="$2"; ' +
+      'if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then exit 1; fi; ' +
+      'mkdir -p -m 700 -- "$dir" || exit 1; ' +
+      'if [ -L "$dir" ] || [ ! -d "$dir" ]; then exit 1; fi; ' +
+      'chmod 700 -- "$dir" 2>/dev/null || exit 1; ' +
+      'find "$dir" -mindepth 1 -maxdepth 1 ! -type f -exec rm -rf -- {} + 2>/dev/null; ' +
+      't=$(mktemp -p "$dir" .history.XXXXXXXXXX) || exit 1; ' +
+      'trap \'rm -f -- "$t"\' EXIT HUP INT TERM; ' +
+      'cat > "$t" || exit 1; ' +
+      'mv -f -T -- "$t" "$dest" || exit 1',
+      "qalculator-history-write", root.stateDir, root.historyPath
+    ]
+    historyWriteProc.running = true
+  }
+
+  // One-time carry-over from the old flat file. The legacy file is removed only
+  // after the new write reports success, so a failed write cannot lose the only
+  // copy: if anything fails the old file is simply left in place.
+  function migrateLegacyHistory() {
+    root.historyMigrated = true
+    legacyReadProc.buffer = ""
+    legacyReadProc.overflow = false
+    legacyReadProc.command = [
+      "/usr/bin/dd", "if=" + root.legacyHistoryPath,
+      "iflag=nofollow,nonblock,count_bytes,fullblock",
+      "bs=1", "count=" + (root.historyBytesMax + 1), "status=none"
+    ]
+    legacyReadProc.running = true
+  }
+
+  function legacyHistoryLoaded(code) {
+    var raw = legacyReadProc.buffer
+    legacyReadProc.buffer = ""
+    if (code !== 0 || legacyReadProc.overflow) return
+    var entries = CalcModel.parseHistory(raw)
+    if (entries.length === 0) return
+    // A history that already exists at the new location wins; the stale legacy
+    // file is not worth carrying over.
+    if (root.history.length > 0) return
+    root.history = entries
+    root.pendingLegacyRemoval = true
+    root.saveHistory()
+  }
+
+  function removeLegacyHistory() {
+    if (!root.pendingLegacyRemoval) return
+    root.pendingLegacyRemoval = false
+    legacyRemoveProc.command = ["/usr/bin/rm", "-f", "--", root.legacyHistoryPath]
+    legacyRemoveProc.running = true
   }
 
   function recordHistory(expr, value) {
@@ -196,6 +331,10 @@ Item {
       return
     }
     var value = CalcModel.cleanResult(output)
+    if (!CalcModel.withinLength(value, CalcModel.RESULT_MAX)) {
+      root.resultVisible = false
+      return
+    }
     root.result = value
     root.resultVisible = true
   }
@@ -205,9 +344,12 @@ Item {
     // No wl-copy means no clipboard. Do not claim success: the notice already
     // tells the user what is missing.
     if (!CalcModel.dependencyAvailable(root.dependencyStates, "wl-copy")) return
+    var wlCopy = CalcModel.dependencyPath("wl-copy")
+    if (!wlCopy) return
     // argv form, not stdin: wl-copy exits once it has forked the owner, while
-    // piping keeps this Process alive for as long as the selection lives.
-    clipProc.command = ["wl-copy", "--type", "text/plain", "--", String(value)]
+    // piping keeps this Process alive for as long as the selection lives. The
+    // `--` keeps a result that starts with `-` from being read as an option.
+    clipProc.command = [wlCopy, "--type", "text/plain", "--", String(value)]
     clipProc.running = true
     root.copied = true
     copiedReset.restart()
@@ -259,32 +401,155 @@ Item {
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
-  Component.onCompleted: root.checkDependencies()
+  Component.onCompleted: {
+    root.checkDependencies()
+    root.readHistory()
+  }
 
-  FileView {
-    id: historyFile
-    path: root.historyPath
-    atomicWrites: true
-    printErrors: false
-    onLoaded: root.loadHistory(text())
-    onLoadFailed: root.loadHistory("[]")
+  // Reader: `dd` with O_NOFOLLOW|O_NONBLOCK, capped at historyBytesMax + 1 so an
+  // oversized file is detected rather than truncated. Output is byte-counted in
+  // the parser, not collected whole.
+  Process {
+    id: historyReadProc
+    command: []
+    property string buffer: ""
+    property bool overflow: false
+    clearEnvironment: true
+    environment: ({ "PATH": "/usr/bin:/bin", "LC_ALL": "C" })
+    onStarted: historyReadTimeout.restart()
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        if (historyReadProc.overflow) return
+        historyReadProc.buffer += chunk
+        // .length is UTF-16 units; the authoritative byte cap is dd's count.
+        if (historyReadProc.buffer.length > root.historyBytesMax) historyReadProc.overflow = true
+      }
+    }
+    onExited: function(code) {
+      historyReadTimeout.stop()
+      root.historyLoaded(code)
+    }
+  }
+
+  // Writer: the whole script is a constant; the directory and destination are
+  // positional parameters and the document arrives on stdin, so no value is
+  // ever interpolated into shell text.
+  Process {
+    id: historyWriteProc
+    command: []
+    property string payload: ""
+    stdinEnabled: true
+    clearEnvironment: true
+    environment: ({ "PATH": "/usr/bin:/bin", "LC_ALL": "C" })
+    onStarted: {
+      historyWriteTimeout.restart()
+      historyWriteProc.write(historyWriteProc.payload)
+      historyWriteProc.payload = ""
+      // Quickshell does not close a child's stdin on its own; without this the
+      // writer waits for EOF forever.
+      historyWriteProc.stdinEnabled = false
+    }
+    onExited: function(code) {
+      historyWriteTimeout.stop()
+      // Deferred legacy cleanup waits for this confirmation: the old file is
+      // only unlinked once the new one is on disk.
+      if (code === 0) root.removeLegacyHistory()
+    }
+  }
+
+  Process {
+    id: legacyReadProc
+    command: []
+    property string buffer: ""
+    property bool overflow: false
+    clearEnvironment: true
+    environment: ({ "PATH": "/usr/bin:/bin", "LC_ALL": "C" })
+    onStarted: legacyReadTimeout.restart()
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        if (legacyReadProc.overflow) return
+        legacyReadProc.buffer += chunk
+        if (legacyReadProc.buffer.length > root.historyBytesMax) legacyReadProc.overflow = true
+      }
+    }
+    onExited: function(code) {
+      legacyReadTimeout.stop()
+      root.legacyHistoryLoaded(code)
+    }
+  }
+
+  Process {
+    id: legacyRemoveProc
+    command: []
+    clearEnvironment: true
+    environment: ({ "PATH": "/usr/bin:/bin" })
   }
 
   Process {
     id: probeProc
     property string probeBin: ""
     command: []
-    stdout: StdioCollector { waitForEnd: true }
+    clearEnvironment: true
+    environment: root.probeEnvironment
+    onStarted: probeTimeout.restart()
     onExited: function(code) {
+      probeTimeout.stop()
       root.setDependencyState(probeBin, code === 0)
       root.probeIndex = root.probeIndex + 1
       root.runProbe()
     }
   }
 
+  // A probe that never answers must not leave a child behind for the life of
+  // the shell. The test is trivial, so the deadline is short.
+  Timer {
+    id: probeTimeout
+    interval: root.probeTimeoutMs
+    repeat: false
+    onTriggered: if (probeProc.running) probeProc.signal(9)
+  }
+
+  // The history reader and writer are local file operations; a hung one means
+  // something is wrong (a stuck FIFO, an unwritable mount) and must be cleared.
+  Timer {
+    id: historyReadTimeout
+    interval: root.historyTimeoutMs
+    repeat: false
+    onTriggered: {
+      if (!historyReadProc.running) return
+      historyReadProc.signal(15)
+      historyReadProc.buffer = ""
+      root.historyLoaded(-1)
+    }
+  }
+  Timer {
+    id: historyWriteTimeout
+    interval: root.historyTimeoutMs
+    repeat: false
+    onTriggered: if (historyWriteProc.running) historyWriteProc.signal(15)
+  }
+  Timer {
+    id: legacyReadTimeout
+    interval: root.historyTimeoutMs
+    repeat: false
+    onTriggered: {
+      if (!legacyReadProc.running) return
+      legacyReadProc.signal(15)
+      legacyReadProc.buffer = ""
+      root.legacyHistoryLoaded(-1)
+    }
+  }
+
   Process {
     id: installProc
     command: []
+    // The Omarchy launcher is a user-session tool: it spawns the terminal
+    // emulator and needs the inherited session environment (DBus, Wayland,
+    // PATH for the rest of Omarchy). The executable is addressed by absolute
+    // path and every package name is validated in CalcModel, so neither the
+    // command nor its arguments come from untrusted data.
     onExited: function(code) {
       // The floating terminal is detached, so this fires almost immediately and
       // is not proof the install landed. Keep the click from being re-entrant
@@ -297,18 +562,65 @@ Item {
   Process {
     id: evalProc
     command: []
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.applyOutput(text)
+    clearEnvironment: true
+    environment: root.qalcEnvironment
+    // SplitParser, not StdioCollector: a collector retains the whole stream
+    // before any check runs. Here each chunk is counted as it arrives and the
+    // child is signalled on overflow, so a pathological expression cannot grow
+    // the shared shell process without bound.
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        if (root.evalOverflow) return
+        root.evalBuffer += chunk
+        // .length counts UTF-16 units; this is defense in depth on top of the
+        // model-level result cap.
+        if (root.evalBuffer.length > root.outputLimit) {
+          root.evalOverflow = true
+          root.evalBuffer = ""
+          evalProc.signal(15)
+          evalKillTimer.start()
+        }
+      }
     }
-    onExited: function(code) {
-      if (code !== 0) root.resultVisible = false
+    onExited: function(code, status) {
+      evalTimeout.stop()
+      evalKillTimer.stop()
+      if (!root.evalOverflow && code === 0) root.applyOutput(root.evalBuffer)
+      else if (code !== 0) root.resultVisible = false
+      root.evalBuffer = ""
+      root.evalOverflow = false
+    }
+  }
+
+  // Escalation if the child ignores TERM; kept alive past the leader's exit so a
+  // stuck descendant is still reached.
+  Timer {
+    id: evalKillTimer
+    interval: root.killGraceMs
+    repeat: false
+    onTriggered: if (evalProc.running) evalProc.signal(9)
+  }
+
+  // Absolute deadline for one evaluation. qalc answers in milliseconds; five
+  // seconds is already pathological.
+  Timer {
+    id: evalTimeout
+    interval: root.evalTimeoutMs
+    repeat: false
+    onTriggered: {
+      if (!evalProc.running) return
+      root.resultVisible = false
+      evalProc.signal(15)
+      evalKillTimer.start()
     }
   }
 
   Process {
     id: clipProc
     command: []
+    clearEnvironment: true
+    environment: root.clipboardEnvironment
   }
 
   Timer {
@@ -318,8 +630,15 @@ Item {
     onTriggered: {
       if (!CalcModel.dependencyAvailable(root.dependencyStates, "qalc")) return
       if (root.expression.trim() === "") return
-      evalProc.command = ["qalc", "-t", "--", root.expression]
+      var qalc = CalcModel.dependencyPath("qalc")
+      if (!qalc) return
+      // Replacing the buffer before start discards any late chunk from a
+      // superseded run: a stale answer must never overwrite a newer one.
+      root.evalBuffer = ""
+      root.evalOverflow = false
+      evalProc.command = [qalc, "-t", "--", root.expression]
       evalProc.running = true
+      evalTimeout.restart()
     }
   }
 
@@ -328,6 +647,20 @@ Item {
     interval: 1200
     repeat: false
     onTriggered: root.copied = false
+  }
+
+  // Teardown: nothing this plugin started may outlive it. Signals reach the
+  // direct child only, which is why every command here is a plain argv with no
+  // shell wrapper to orphan anyone.
+  Component.onDestruction: {
+    if (probeProc.running) probeProc.signal(15)
+    if (evalProc.running) evalProc.signal(15)
+    if (clipProc.running) clipProc.signal(15)
+    if (installProc.running) installProc.signal(15)
+    if (historyReadProc.running) historyReadProc.signal(15)
+    if (historyWriteProc.running) historyWriteProc.signal(15)
+    if (legacyReadProc.running) legacyReadProc.signal(15)
+    if (legacyRemoveProc.running) legacyRemoveProc.signal(15)
   }
 
   PanelWindow {
@@ -381,7 +714,17 @@ Item {
             accent: Color.accent
             font.pixelSize: Style.font.title
             placeholderText: "Type an expression…"
+            // Bound the ingress at the widget itself; CalcModel re-checks the
+            // same cap before anything is stored or rendered.
+            maximumLength: root.expressionLimit
             onTextChanged: {
+              // A paste can carry control characters; drop them at the widget so
+              // nothing invisible ever reaches the model or the history file.
+              var cleaned = CalcModel.sanitizeText(text)
+              if (cleaned !== text) {
+                input.text = cleaned
+                return
+              }
               if (root.expression !== text) {
                 root.expression = text
                 root.historyIndex = -1
@@ -420,6 +763,9 @@ Item {
             width: Math.min(parent.width * 0.5, implicitWidth)
             visible: root.resultVisible
             text: root.copied ? "Copied" : root.result
+            // A qalc answer is data, not markup: never let Qt sniff it as rich
+            // text, which would turn a crafted expression into an <img> fetch.
+            textFormat: Text.PlainText
             color: root.copied ? Color.accent : root.selectedText
             font.family: root.fontFamily
             font.pixelSize: Style.font.title
@@ -443,6 +789,7 @@ Item {
             leftPadding: Style.spacing.sm
             rightPadding: Style.spacing.sm
             text: root.installingDependencies ? "Installing in a floating terminal…" : root.dependencyNotice
+            textFormat: Text.PlainText
             color: Color.urgent
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
@@ -483,6 +830,7 @@ Item {
                   width: parent.width
                   height: root.helpLineHeight
                   text: modelData.title
+                  textFormat: Text.PlainText
                   color: Color.accent
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
@@ -504,6 +852,7 @@ Item {
                       anchors.leftMargin: Style.spacing.rowPaddingX
                       anchors.verticalCenter: parent.verticalCenter
                       text: modelData.syntax
+                      textFormat: Text.PlainText
                       color: root.foreground
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.body
@@ -516,6 +865,7 @@ Item {
                       anchors.rightMargin: Style.spacing.rowPaddingX
                       anchors.verticalCenter: parent.verticalCenter
                       text: modelData.note
+                      textFormat: Text.PlainText
                       color: root.foreground
                       opacity: 0.55
                       horizontalAlignment: Text.AlignRight
@@ -565,6 +915,7 @@ Item {
                 id: shortcutLabel
                 anchors.centerIn: parent
                 text: CalcModel.historyShortcutLabel(index)
+                textFormat: Text.PlainText
                 color: root.foreground
                 opacity: 0.65
                 font.family: root.fontFamily
@@ -581,6 +932,7 @@ Item {
               anchors.rightMargin: Style.spacing.md
               anchors.verticalCenter: parent.verticalCenter
               text: modelData.expression
+              textFormat: Text.PlainText
               color: index === root.historyIndex ? root.selectedText : root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -594,6 +946,7 @@ Item {
               anchors.verticalCenter: parent.verticalCenter
               width: Math.min(parent.width * 0.5, implicitWidth)
               text: modelData.result
+              textFormat: Text.PlainText
               color: root.foreground
               opacity: 0.85
               font.family: root.fontFamily
@@ -614,6 +967,7 @@ Item {
           height: root.hintHeight
           visible: root.showHint
           text: root.depsMissing ? "" : "Ctrl+/ for help  ·  try  2+2  ·  10 usd to gbp"
+          textFormat: Text.PlainText
           color: root.foreground
           opacity: 0.58
           font.family: root.fontFamily

@@ -246,4 +246,88 @@ TestCase {
     compare(CalcModel.dependencyNotice([]), "")
     compare(CalcModel.dependencyNotice(null), "")
   }
+
+  // ── Text hygiene ─────────────────────────────────────────────────────────
+
+  function test_sanitizeStripsControlChars() {
+    compare(CalcModel.sanitizeText("4\u0000"), "4")
+    compare(CalcModel.sanitizeText("a\u001bb"), "ab")
+    compare(CalcModel.sanitizeText("x\u202Ey"), "xy")
+  }
+
+  function test_sanitizeKeepsVisibleUnicode() {
+    // qalc legitimately answers with these; they must survive the filter.
+    compare(CalcModel.sanitizeText("73.66 cm"), "73.66 cm")
+    compare(CalcModel.sanitizeText("−2"), "−2")
+    compare(CalcModel.sanitizeText("√2"), "√2")
+    compare(CalcModel.sanitizeText("≈1.414"), "≈1.414")
+  }
+
+  function test_cleanResultStripsControlChars() {
+    compare(CalcModel.cleanResult("4\u0007"), "4")
+    compare(CalcModel.cleanResult("\u202E4"), "4")
+  }
+
+  function test_parseHistoryRejectsOversizedFields() {
+    var filler = ""
+    for (var i = 0; i < CalcModel.EXPRESSION_MAX + 1; i++) filler += "x"
+    var raw = JSON.stringify([{ expression: filler, result: "1" }])
+    compare(CalcModel.parseHistory(raw).length, 0)
+  }
+
+  function test_parseHistoryStripsControlCharsFromEntries() {
+    var raw = JSON.stringify([{ expression: "2+2\u0000", result: "4\u202E" }])
+    var entries = CalcModel.parseHistory(raw)
+    compare(entries.length, 1)
+    compare(entries[0].expression, "2+2")
+    compare(entries[0].result, "4")
+  }
+
+  function test_parseHistoryStopsAtLimit() {
+    var many = []
+    for (var i = 0; i < CalcModel.HISTORY_LIMIT * 3; i++) many.push({ expression: "e" + i, result: "1" })
+    compare(CalcModel.parseHistory(JSON.stringify(many)).length, CalcModel.HISTORY_LIMIT)
+  }
+
+  function test_missingPackagesRejectsNonPackageNames() {
+    var missing = [{ bin: "qalc", pkg: "libqalculate; rm -rf /" }]
+    compare(CalcModel.missingPackages(missing).length, 0)
+  }
+
+  function test_dependencyPathIsAbsoluteAndKnown() {
+    compare(CalcModel.dependencyPath("qalc"), "/usr/bin/qalc")
+    compare(CalcModel.dependencyPath("wl-copy"), "/usr/bin/wl-copy")
+    compare(CalcModel.dependencyPath("nope"), "")
+  }
+
+  // ── State paths ──────────────────────────────────────────────────────────
+
+  function test_stateDirUsesXdgWhenSet() {
+    compare(CalcModel.stateDir("/home/u", "/xdg/state"), "/xdg/state/omarchy/qalculator")
+  }
+
+  function test_stateDirFallsBackToXdgSpecDefault() {
+    // No /tmp fallback: an unset XDG_STATE_HOME means $HOME/.local/state.
+    compare(CalcModel.stateDir("/home/u", ""), "/home/u/.local/state/omarchy/qalculator")
+    compare(CalcModel.stateDir("/home/u", undefined), "/home/u/.local/state/omarchy/qalculator")
+  }
+
+  function test_historyFileSitsInsideStateDir() {
+    compare(CalcModel.historyFile("/s/omarchy/qalculator"), "/s/omarchy/qalculator/history.json")
+  }
+
+  function test_legacyHistoryFileIsTheOldFlatPath() {
+    compare(CalcModel.legacyHistoryFile("/home/u", ""), "/home/u/.local/state/omarchy/qalculator-history.json")
+    compare(CalcModel.legacyHistoryFile("/home/u", "/xdg"), "/xdg/omarchy/qalculator-history.json")
+  }
+
+  function test_newPathNeverCollidesWithLegacyPath() {
+    var dir = CalcModel.stateDir("/home/u", "")
+    verify(CalcModel.historyFile(dir) !== CalcModel.legacyHistoryFile("/home/u", ""))
+  }
+
+  function test_historyBytesMaxIsAPositiveInt() {
+    verify(CalcModel.HISTORY_BYTES_MAX > 0)
+    verify(CalcModel.HISTORY_BYTES_MAX === Math.floor(CalcModel.HISTORY_BYTES_MAX))
+  }
 }
