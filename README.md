@@ -17,15 +17,15 @@
 
 Most desktop calculators are either a full app you have to find and close, or a terminal invocation that lives in your shell history. Qalculator is neither.
 
-| Dimension               | omarchy-qalculator                              | GNOME Calculator      | Raw `qalc` in a terminal         |
-| :---------------------- | :---------------------------------------------- | :-------------------- | :------------------------------- |
-| **Invocation**          | Global hotkey, in-place overlay                 | App launcher + window | Open terminal, type, read, close |
-| **Feedback**            | Live answer as you type (150 ms debounce)       | Click / keypad driven | Submit, then read                |
-| **History**             | Persistent, deduplicated, one key to re-copy    | Session history panel | Shell scrollback                 |
-| **Engine**              | Native `qalc` — units, currencies, functions    | Custom GPL engine     | Native `qalc`                    |
-| **Footprint**           | One QML overlay, no resident process of its own | Full GTK app          | Full `qalc` binary on every call |
-| **Copy behaviour**      | <kbd>Enter</kbd> copies and closes              | Manual select & copy  | Manual select & copy             |
-| **Dependency handling** | Probed at startup, one-click install if missing | Bundled               | `qalc` must be on `PATH`         |
+| Dimension               | omarchy-qalculator                                    | GNOME Calculator      | Raw `qalc` in a terminal         |
+| :---------------------- | :---------------------------------------------------- | :-------------------- | :------------------------------- |
+| **Invocation**          | Global hotkey, in-place overlay                       | App launcher + window | Open terminal, type, read, close |
+| **Feedback**            | Live answer as you type (150 ms debounce)             | Click / keypad driven | Submit, then read                |
+| **History**             | Persistent, deduplicated, one key to re-copy          | Session history panel | Shell scrollback                 |
+| **Engine**              | Native `qalc` — units, currencies, functions          | Custom GPL engine     | Native `qalc`                    |
+| **Footprint**           | One QML overlay, no resident process of its own       | Full GTK app          | Full `qalc` binary on every call |
+| **Copy behaviour**      | <kbd>Enter</kbd> copies and closes                    | Manual select & copy  | Manual select & copy             |
+| **Dependency handling** | Probed by absolute path, one-click install if missing | Bundled               | `qalc` must be on `PATH`         |
 
 ### Design goals
 
@@ -67,10 +67,10 @@ Conversions use qalc's `to` keyword (`10 usd to gbp`, `29 inches to cm`). qalc r
 
 Ensure the following tools are available on your system:
 
-- **Calculator engine**: `qalc` (Arch: the `libqalculate` package) on `PATH`. Currency conversion uses qalc's cached rates; no network call is made by this plugin.
-- **Wayland clipboard tooling**: `wl-copy` (part of `wl-clipboard`) for the copy action.
+- **Calculator engine**: `qalc` (Arch: the `libqalculate` package), probed at `/usr/bin/qalc`. Currency conversion uses qalc's cached rates; no network call is made by this plugin.
+- **Wayland clipboard tooling**: `wl-copy` (part of `wl-clipboard`), probed at `/usr/bin/wl-copy`, for the copy action.
 
-Both are checked once at load. If either is missing, the overlay shows a notice naming the binary and its package; clicking it runs `omarchy pkg add libqalculate wl-clipboard` in a floating terminal and re-probes once that terminal closes. Everything else keeps working: a missing `qalc` disables live evaluation, a missing `wl-copy` disables copy (no false "Copied" confirmation).
+Both are checked once at load with `test -x` against their absolute paths — the plugin never resolves a binary through `PATH`. If either is missing, the overlay shows a notice naming the binary and its package; clicking it runs the Omarchy launcher to `omarchy pkg add libqalculate wl-clipboard` in a floating terminal and re-probes once that terminal closes. Everything else keeps working: a missing `qalc` disables live evaluation, a missing `wl-copy` disables copy (no false "Copied" confirmation).
 
 ---
 
@@ -97,7 +97,7 @@ The Shift/Alt/Ctrl resize variants of that key can be left intact.
 
 ---
 
-## Update & Uninstall
+## Update & Removal
 
 - **Update Plugin**:
 
@@ -105,30 +105,59 @@ The Shift/Alt/Ctrl resize variants of that key can be left intact.
 omarchy plugin update icyleaf.qalculator
 ```
 
-- **Uninstall Plugin**:
+- **Remove Plugin**:
 
 ```bash
 omarchy plugin remove icyleaf.qalculator
 ```
 
+### What removal leaves behind
+
+`omarchy plugin remove` deletes the plugin directory and the enabled entry. It does **not** touch state the plugin wrote, because that data lives outside the plugin tree. The only persistent artifact is:
+
+| Path                                                                    | Contents                            | On `plugin remove` |
+| :---------------------------------------------------------------------- | :---------------------------------- | :----------------- |
+| `${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/qalculator/history.json` | The last 50 expressions and results | **Kept**           |
+
+To delete it too (the directory is the plugin's own, so the whole tree goes):
+
+```bash
+rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/qalculator"
+```
+
+Nothing else survives: there is no daemon, no socket, no systemd unit, no keyring entry, no sudoers or polkit rule, no package installed by the plugin, and no shared Hyprland or `shell.json` configuration is edited. The hotkey binding you added to `~/.config/hypr/bindings.lua` is _your_ configuration and is left as-is; remove those two lines by hand if you no longer want the bind.
+
+The plugin performs no downloads, no package installs and no configuration writes on load — the one-click dependency install is the only action that installs anything, and it runs only when you click the notice.
+
 ---
 
 ## Architecture
 
-| File            | Role                                                                                                                |
-| :-------------- | :------------------------------------------------------------------------------------------------------------------ |
-| `manifest.json` | `kinds: ["overlay"]`, `activation: "on-demand"`, `keepLoaded: true`.                                                |
-| `Overlay.qml`   | The overlay: input, live answer, history list, qalc process, clipboard process, dependency probe.                   |
-| `CalcModel.js`  | The pure-JS seam: history parsing/dedup/capping, result cleaning, the evaluation gate, and the help reference data. |
-| `tests/`        | QML test suite covering `CalcModel.js`.                                                                             |
+| File            | Role                                                                                                                                              |
+| :-------------- | :------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `manifest.json` | `kinds: ["overlay"]`, `activation: "on-demand"`, `keepLoaded: true`.                                                                              |
+| `Overlay.qml`   | The overlay: input, live answer, history list, qalc process, clipboard process, dependency probe.                                                 |
+| `CalcModel.js`  | The pure-JS seam: history parsing/dedup/capping, text sanitising, output caps, result cleaning, the evaluation gate, and the help reference data. |
+| `tests/`        | QML test suite covering `CalcModel.js`, plus `audit.sh` for the QML surface.                                                                      |
 
-History is stored at `~/.local/state/omarchy/qalculator-history.json`, written atomically on commit only — partial keystrokes never reach disk.
+History is stored at `${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/qalculator/history.json`, written atomically on commit only — partial keystrokes never reach disk. The plugin's directory is created and repaired at `0700`, the file at `0600`. When the new location has no history yet, the first run carries over a history left at the old flat path (`omarchy/qalculator-history.json`) and removes it — but only after the new file is written. The old file is left untouched if it holds nothing, if the new location already has history, or if the carry-over write fails.
+
+### Bounds and hygiene
+
+Anything that did not originate in this plugin is treated as data:
+
+- Every rendered string is a `Text.PlainText` sink, so a crafted expression or a hostile history document can never be interpreted as rich text and trigger a resource load.
+- Control characters (C0, C1, line separators, bidi controls) are stripped at ingestion in `CalcModel.js`, and expressions/results are capped in length before they are stored or shown.
+- Child processes run from absolute paths with a constructed environment; their output is byte-counted as it streams and the child is signalled if it exceeds the ceiling, under an absolute deadline with TERM/KILL escalation.
+- The history document is read with `dd iflag=nofollow,nonblock,count_bytes,fullblock` (so a symlink is refused, a FIFO cannot block the shell process, and an oversized file is detected rather than truncated) and written through a same-directory temporary created `0600` and renamed over the destination (so a planted symlink is replaced, never followed). Both scripts are constants with the path as an argument and the data on stdin.
+- Entries read back from the history document are re-validated (shape, length, character set) rather than trusted.
 
 ### Tests
 
 ```bash
 cd tests
 qmltestrunner -input tst_calcmodel.qml
+./audit.sh
 ```
 
 ---

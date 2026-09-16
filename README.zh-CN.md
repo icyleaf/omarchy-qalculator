@@ -25,7 +25,7 @@
 | **计算引擎** | 原生 `qalc`——单位、货币、函数   | 自研 GPL 引擎     | 原生 `qalc`                 |
 | **资源占用** | 单个 QML 覆盖层，自身无常驻进程 | 完整 GTK 应用     | 每次调用都启动完整 `qalc`   |
 | **复制行为** | <kbd>Enter</kbd> 复制并关闭     | 手动选中并复制    | 手动选中并复制              |
-| **依赖处理** | 启动时探测，缺失可一键安装      | 随应用捆绑        | 需自行保证 `qalc` 在 `PATH` |
+| **依赖处理** | 按绝对路径探测，缺失可一键安装  | 随应用捆绑        | 需自行保证 `qalc` 在 `PATH` |
 
 ### 设计目标
 
@@ -67,10 +67,10 @@
 
 请确保系统中具备以下工具：
 
-- **计算引擎**：`qalc`（Arch：`libqalculate` 包）位于 `PATH`。货币换算使用 qalc 的缓存汇率，本插件不发起任何网络请求。
-- **Wayland 剪贴板工具**：`wl-copy`（属于 `wl-clipboard` 包），用于复制操作。
+- **计算引擎**：`qalc`（Arch：`libqalculate` 包），探测路径 `/usr/bin/qalc`。货币换算使用 qalc 的缓存汇率，本插件不发起任何网络请求。
+- **Wayland 剪贴板工具**：`wl-copy`（属于 `wl-clipboard` 包），探测路径 `/usr/bin/wl-copy`，用于复制操作。
 
-两者在加载时各探测一次。若任一缺失，覆盖层会显示一条提示，点名缺失的二进制及其所属包；点击后会在浮动终端中执行 `omarchy pkg add libqalculate wl-clipboard`，终端关闭后重新探测。其余功能不受影响：缺少 `qalc` 仅禁用实时求值，缺少 `wl-copy` 仅禁用复制（不会出现虚假的“已复制”提示）。
+两者在加载时各用 `test -x` 对绝对路径探测一次——插件从不通过 `PATH` 解析二进制。若任一缺失，覆盖层会显示一条提示，点名缺失的二进制及其所属包；点击后经由 Omarchy launcher 在浮动终端中执行 `omarchy pkg add libqalculate wl-clipboard`，终端关闭后重新探测。其余功能不受影响：缺少 `qalc` 仅禁用实时求值，缺少 `wl-copy` 仅禁用复制（不会出现虚假的“已复制”提示）。
 
 ---
 
@@ -111,24 +111,53 @@ omarchy plugin update icyleaf.qalculator
 omarchy plugin remove icyleaf.qalculator
 ```
 
+### 卸载后残留
+
+`omarchy plugin remove` 会删除插件目录与启用项，但**不会**触碰插件写下的状态数据，因为那些数据位于插件目录之外。唯一的持久化产物是：
+
+| 路径                                                                    | 内容                   | `plugin remove` 后 |
+| :---------------------------------------------------------------------- | :--------------------- | :----------------- |
+| `${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/qalculator/history.json` | 最近 50 条表达式与结果 | **保留**           |
+
+若要一并删除（该目录为插件独占，可整棵删掉）：
+
+```bash
+rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/qalculator"
+```
+
+除此之外没有其他残留：没有守护进程、没有套接字、没有 systemd unit、没有 keyring 条目、没有 sudoers 或 polkit 规则、没有由插件安装的软件包，也不会改写共享的 Hyprland 或 `shell.json` 配置。你写入 `~/.config/hypr/bindings.lua` 的快捷键属于**你自己的配置**，插件不会改动；如果不再需要该绑定，请手动删掉那两行。
+
+插件在加载时不执行任何下载、装包或配置写入——一键安装依赖是唯一会改动系统的动作，且只在你点击提示时运行。
+
 ---
 
 ## 架构说明
 
-| 文件            | 职责                                                                         |
-| :-------------- | :--------------------------------------------------------------------------- |
-| `manifest.json` | `kinds: ["overlay"]`、`activation: "on-demand"`、`keepLoaded: true`。        |
-| `Overlay.qml`   | 覆盖层本体：输入框、实时答案、历史列表、qalc 进程、剪贴板进程、依赖探测。    |
-| `CalcModel.js`  | 纯 JS 接缝层：历史解析 / 去重 / 截断、结果清洗、求值门控，以及帮助速查数据。 |
-| `tests/`        | 覆盖 `CalcModel.js` 的 QML 测试套件。                                        |
+| 文件            | 职责                                                                                             |
+| :-------------- | :----------------------------------------------------------------------------------------------- |
+| `manifest.json` | `kinds: ["overlay"]`、`activation: "on-demand"`、`keepLoaded: true`。                            |
+| `Overlay.qml`   | 覆盖层本体：输入框、实时答案、历史列表、qalc 进程、剪贴板进程、依赖探测。                        |
+| `CalcModel.js`  | 纯 JS 接缝层：历史解析 / 去重 / 截断、文本清洗、输出上限、结果清洗、求值门控，以及帮助速查数据。 |
+| `tests/`        | 覆盖 `CalcModel.js` 的 QML 测试套件，以及面向 QML 表层面的 `audit.sh`。                          |
 
-历史记录保存在 `~/.local/state/omarchy/qalculator-history.json`，仅在提交时原子写入——半截的按键输入不会落盘。
+历史记录保存在 `${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/qalculator/history.json`，仅在提交时原子写入——半截的按键输入不会落盘。插件目录以 `0700` 创建并修复，文件为 `0600`；首次在新布局下运行会把位于旧扁平路径（`omarchy/qalculator-history.json`）的历史迁移过来，随后删除旧文件。
+
+### 边界与卫生
+
+凡不是本插件自己产生的字符串，一律当作数据对待：
+
+- 每个渲染点都是 `Text.PlainText`,因此精心构造的表达式或恶意历史文档永远无法被解释为富文本、进而触发资源加载。
+- 控制字符（C0、C1、行分隔符、双向控制符）在 `CalcModel.js` 入口处被剥离；表达式与结果在存储或展示前都经过长度上限。
+- 子进程以绝对路径加构造环境运行；其输出在流式到达时即按字节计数，超限即向子进程发信号，并在绝对截止时间下做 TERM/KILL 升级。
+- 历史文档的读取使用 `dd iflag=nofollow,nonblock,count_bytes,fullblock`（因此 symlink 被拒绝、FIFO 无法阻塞 shell 进程、超长文件被识别为溢出而非截断）；写入则经由同目录下的临时文件（创建即 0600）再 rename 覆盖目标（因此被预埋的 symlink 会被替换、绝不被跟随）。两段脚本均为常量，路径以参数传入、数据走 stdin。
+- 从历史文档读回的条目会重新校验（结构、长度、字符集），而非直接信任。
 
 ### 测试
 
 ```bash
 cd tests
 qmltestrunner -input tst_calcmodel.qml
+./audit.sh
 ```
 
 ---
