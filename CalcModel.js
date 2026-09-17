@@ -124,7 +124,7 @@ function helpSections() {
       rows: [
         { syntax: "Enter", note: "copy answer and close" },
         { syntax: "Alt+Enter", note: "copy answer, stay open" },
-        { syntax: "Up / Down", note: "browse history" },
+        { syntax: "Down / Up", note: "walk history into the input" },
         { syntax: "Ctrl+1…9 · Ctrl+0", note: "copy history 1-10, close" },
         { syntax: "Ctrl+/", note: "toggle this help" },
         { syntax: "Esc", note: "close" }
@@ -157,6 +157,32 @@ function historyIndexForKey(key) {
 function historyShortcutLabel(index) {
   if (index < 0 || index > 9) return ""
   return "⌃" + String(index === 9 ? 0 : index + 1)
+}
+
+// Step for a history-browse key: ↓ walks toward older entries (the list focus
+// moves down the rows), ↑ walks back toward the newest. Any other key is 0.
+function historyStepForKey(key) {
+  if (key === Qt.Key_Down) return 1
+  if (key === Qt.Key_Up) return -1
+  return 0
+}
+
+// Next selection when walking the history with ↓ (step = +1, toward older
+// entries, matching the list focus moving down the rows) or ↑ (step = -1, back
+// toward the newest). `current` is -1 when no row is selected. The walk stops
+// at both ends rather than wrapping:
+//   - stepping past the oldest row keeps the oldest selected
+//   - stepping back past the newest returns -1, which the caller reads as
+//     "leave the browse mode"
+// `count` is the history length.
+function nextHistoryIndex(current, step, count) {
+  var length = count > 0 ? count : 0
+  if (length === 0) return -1
+  var from = current >= 0 && current < length ? current : -1
+  var next = from + step
+  if (next < -1) next = -1
+  if (next > length - 1) next = length - 1
+  return next
 }
 
 function parseHistory(raw) {

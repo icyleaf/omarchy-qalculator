@@ -173,6 +173,66 @@ TestCase {
     compare(CalcModel.historyShortcutLabel(9), "⌃0")
   }
 
+  // ── History browsing (↓/↑) ───────────────────────────────────────────────
+
+  function test_historyStepForKeyMapsDownToOlder() {
+    // ↓ moves down the list, i.e. toward older entries; ↑ walks back.
+    compare(CalcModel.historyStepForKey(Qt.Key_Down), 1)
+    compare(CalcModel.historyStepForKey(Qt.Key_Up), -1)
+  }
+
+  function test_historyStepForKeyIgnoresOtherKeys() {
+    compare(CalcModel.historyStepForKey(Qt.Key_Return), 0)
+    compare(CalcModel.historyStepForKey(Qt.Key_Escape), 0)
+    compare(CalcModel.historyStepForKey(Qt.Key_Slash), 0)
+  }
+
+  function test_nextHistoryIndexFirstDownSelectsNewest() {
+    // From the neutral -1, one ↓ lands on row 0 (the newest entry).
+    compare(CalcModel.nextHistoryIndex(-1, 1, 5), 0)
+  }
+
+  function test_nextHistoryIndexDownWalksTowardOlder() {
+    compare(CalcModel.nextHistoryIndex(0, 1, 5), 1)
+    compare(CalcModel.nextHistoryIndex(3, 1, 5), 4)
+  }
+
+  function test_nextHistoryIndexStopsAtOldest() {
+    compare(CalcModel.nextHistoryIndex(4, 1, 5), 4)
+  }
+
+  function test_nextHistoryIndexUpReturnsToNewestThenLeaves() {
+    compare(CalcModel.nextHistoryIndex(2, -1, 5), 1)
+    compare(CalcModel.nextHistoryIndex(0, -1, 5), -1)
+    // Already neutral: ↑ stays neutral.
+    compare(CalcModel.nextHistoryIndex(-1, -1, 5), -1)
+  }
+
+  function test_nextHistoryIndexEmptyHistoryIsNeutral() {
+    compare(CalcModel.nextHistoryIndex(-1, 1, 0), -1)
+    compare(CalcModel.nextHistoryIndex(0, -1, 0), -1)
+  }
+
+  function test_nextHistoryIndexClampsOutOfRangeCurrent() {
+    // A stale index outside the list is treated as neutral, so ↓ starts at the
+    // newest row rather than at a bogus position.
+    compare(CalcModel.nextHistoryIndex(99, 1, 3), 0)
+    compare(CalcModel.nextHistoryIndex(-5, 1, 3), 0)
+    compare(CalcModel.nextHistoryIndex(99, -1, 3), -1)
+  }
+
+  function test_nextHistoryIndexFullDownThenFullUp() {
+    var count = 3
+    var i = -1
+    i = CalcModel.nextHistoryIndex(i, 1, count); compare(i, 0)
+    i = CalcModel.nextHistoryIndex(i, 1, count); compare(i, 1)
+    i = CalcModel.nextHistoryIndex(i, 1, count); compare(i, 2)
+    i = CalcModel.nextHistoryIndex(i, 1, count); compare(i, 2) // clamp
+    i = CalcModel.nextHistoryIndex(i, -1, count); compare(i, 1)
+    i = CalcModel.nextHistoryIndex(i, -1, count); compare(i, 0)
+    i = CalcModel.nextHistoryIndex(i, -1, count); compare(i, -1) // leave
+  }
+
   // ── Dependencies ─────────────────────────────────────────────────────────
 
   function test_dependenciesAreWellFormed() {

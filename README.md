@@ -40,7 +40,7 @@ Most desktop calculators are either a full app you have to find and close, or a 
 - **Live evaluation** — the answer appears as you type (150 ms debounce). The evaluation gate rejects trailing operators and output-equals-input echoes.
 - **Full qalc reach** — arithmetic, powers, functions, constants, unit conversion and currency (`2+2`, `sqrt(625)`, `29 inches to cm`, `10 usd to gbp`). Offline; qalc uses its cached exchange rates.
 - **Copy on Enter** — <kbd>Enter</kbd> copies the answer and closes. <kbd>Alt</kbd>+<kbd>Enter</kbd> copies and keeps the overlay open for the next calculation.
-- **Persistent history** — the last 50 successful expressions, newest first. Re-computing an expression moves it to the top instead of duplicating it.
+- **Persistent history** — the last 50 successful expressions, newest first. Re-computing an expression moves it to the top instead of duplicating it. <kbd>↓</kbd>/<kbd>↑</kbd> walk the list into the input box one entry at a time, keeping the list visible and showing each entry's stored result.
 - **Built-in help** — <kbd>Ctrl</kbd>+<kbd>/</kbd> swaps the history area for a syntax reference (math, percent, conversions, currency, keys), and swaps back.
 - **Focused-monitor overlay** — a fullscreen `PanelWindow` on the focused output, matching the emojis and clipboard overlays.
 - **Missing dependencies?** — each external tool is probed once at load; a missing one shows a clickable notice that installs it.
@@ -54,7 +54,7 @@ Most desktop calculators are either a full app you have to find and close, or a 
 | <kbd>SUPER</kbd> + <kbd>=</kbd>                                              | Toggle the overlay                            |
 | <kbd>Enter</kbd>                                                             | Copy the answer and close                     |
 | <kbd>Alt</kbd> + <kbd>Enter</kbd>                                            | Copy the answer and stay open                 |
-| <kbd>↑</kbd> / <kbd>↓</kbd>                                                  | Browse history (empty input)                  |
+| <kbd>↓</kbd> / <kbd>↑</kbd>                                                  | Walk history into the input, newest first     |
 | <kbd>Ctrl</kbd> + <kbd>1</kbd>…<kbd>9</kbd> / <kbd>Ctrl</kbd> + <kbd>0</kbd> | Copy history row 1–10 and close (empty input) |
 | <kbd>Ctrl</kbd> + <kbd>/</kbd>                                               | Toggle the syntax help (empty input)          |
 | <kbd>Esc</kbd>                                                               | Close                                         |

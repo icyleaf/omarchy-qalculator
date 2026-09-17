@@ -27,6 +27,13 @@ Item {
   property var history: []
   property int historyIndex: -1
   property bool helpVisible: false
+  // True while ↑/↓ are walking the history. Browsing keeps the list on screen
+  // even though the input box now holds the selected expression, and makes the
+  // answer area show that entry's stored result instead of a fresh evaluation.
+  property bool browsingHistory: false
+  // Set while the code (not the user) is writing to the input box: the
+  // TextField's onTextChanged must not treat a browsed fill as manual typing.
+  property bool syncingInput: false
 
   // ── Output and process bounds ─────────────────────────────────────────────
   // A child is never allowed to retain output in the shared shell process
@@ -102,9 +109,16 @@ Item {
   property bool historyMigrated: false
   property bool pendingLegacyRemoval: false
   readonly property bool inputEmpty: expression.trim() === ""
-  readonly property bool showHistory: inputEmpty && history.length > 0 && !helpVisible
+  readonly property bool showHistory: (inputEmpty || browsingHistory) && history.length > 0 && !helpVisible
   readonly property bool showHelp: inputEmpty && helpVisible
   readonly property bool showHint: inputEmpty && history.length === 0 && !helpVisible
+  // The entry currently highlighted by ↑/↓, or null when not browsing.
+  readonly property var browsedEntry: (browsingHistory && historyIndex >= 0 && historyIndex < history.length)
+    ? history[historyIndex] : null
+  // While browsing, the answer area mirrors the stored result rather than a
+  // fresh evaluation, so what the user sees always matches the highlighted row.
+  readonly property string shownResult: browsedEntry ? browsedEntry.result : result
+  readonly property bool shownResultVisible: browsingHistory ? browsedEntry !== null : resultVisible
   readonly property int historyVisibleRows: Math.min(history.length, 7)
   readonly property int hintHeight: Math.round(Style.font.body * 1.6)
   readonly property int noticeHeight: Math.round(Style.font.body * 1.6)
@@ -138,6 +152,7 @@ Item {
     root.resultVisible = false
     root.copied = false
     root.historyIndex = -1
+    root.browsingHistory = false
     root.helpVisible = false
     // Cheap recheck: only re-probe what was known to be missing, so a tool
     // installed while the overlay was closed is picked up on the next summon.
@@ -355,38 +370,72 @@ Item {
     copiedReset.restart()
   }
 
-  // Enter: copy and close. Alt+Enter: copy and stay open. When the input is
-  // empty, Enter accepts the highlighted history entry. History is written on
-  // this commit rather than on every debounce tick, so partial keystrokes
-  // (`2`, then `2+`) never make it to disk.
+  // Enter: copy and close. Alt+Enter: copy and stay open. While browsing, Enter
+  // copies the highlighted entry's stored result; otherwise it commits the
+  // current expression. History is written on this commit rather than on every
+  // debounce tick, so partial keystrokes (`2`, then `2+`) never make it to disk.
   function accept(keepOpen) {
     var value = ""
-    if (root.expression.trim() !== "" && root.resultVisible) {
+    if (root.browsedEntry) {
+      value = root.browsedEntry.result
+    } else if (root.expression.trim() !== "" && root.resultVisible) {
       value = root.result
       root.recordHistory(root.expression.trim(), value)
-    } else if (root.showHistory && root.historyIndex >= 0 && root.historyIndex < root.history.length) {
-      value = root.history[root.historyIndex].result
     }
     if (!value) return
     root.copyResult(value)
     if (!keepOpen) root.dismiss()
-    else Qt.callLater(function() { input.forceActiveFocus() })
+    else {
+      root.exitHistoryBrowsing()
+      Qt.callLater(function() { input.forceActiveFocus() })
+    }
   }
 
-  function moveHistory(delta) {
-    if (!root.showHistory) return
-    var next = root.historyIndex + delta
-    if (next < -1) next = -1
-    if (next >= root.history.length) next = root.history.length - 1
-    if (next === root.historyIndex) return
+  // Walk the history newest-first. `step` is +1 to move to the next older entry
+  // (↓, matching the list focus moving down the rows) and -1 to move back toward
+  // the newest (↑). The first ↓ from the neutral state selects row 0 (the newest
+  // entry); walking back past row 0 clears the input and returns to typing.
+  function moveHistory(step) {
+    if (root.history.length === 0 || root.helpVisible) return
+    if (!root.browsingHistory && !root.inputEmpty) return
+    var from = root.browsingHistory ? root.historyIndex : -1
+    var next = CalcModel.nextHistoryIndex(from, step, root.history.length)
+    if (next === from) return
+    if (next === -1) {
+      root.exitHistoryBrowsing()
+      return
+    }
+    root.browsingHistory = true
     root.historyIndex = next
+    // Reflect the browsed expression in the input box without triggering the
+    // "user typed something" path. The stored result, not a re-evaluation, is
+    // what the answer area shows (see shownResult).
+    root.syncingInput = true
+    input.text = root.history[next].expression
+    root.syncingInput = false
+    root.expression = root.history[next].expression
+    root.resultVisible = false
+    evalTimer.stop()
+  }
+
+  // Leave the browse mode and hand the overlay back to typing.
+  function exitHistoryBrowsing() {
+    root.browsingHistory = false
+    root.historyIndex = -1
+    root.syncingInput = true
+    input.text = ""
+    root.syncingInput = false
+    root.expression = ""
+    root.result = ""
+    root.resultVisible = false
   }
 
   // Ctrl+/ swaps the history area between the history list and the help
-  // reference. Both only ever show with an empty input, so the toggle is a
-  // mode on the same surface.
+  // reference. Help only makes sense with an empty input, so opening it leaves
+  // the browse mode first.
   function toggleHelp() {
-    if (!root.inputEmpty) return
+    if (!root.inputEmpty && !root.browsingHistory) return
+    if (!root.helpVisible) root.exitHistoryBrowsing()
     root.helpVisible = !root.helpVisible
     root.historyIndex = -1
   }
@@ -718,6 +767,9 @@ Item {
             // same cap before anything is stored or rendered.
             maximumLength: root.expressionLimit
             onTextChanged: {
+              // A programmatic fill while browsing is not user typing: keep the
+              // browse state and do not re-evaluate.
+              if (root.syncingInput) return
               // A paste can carry control characters; drop them at the widget so
               // nothing invisible ever reaches the model or the history file.
               var cleaned = CalcModel.sanitizeText(text)
@@ -725,9 +777,14 @@ Item {
                 input.text = cleaned
                 return
               }
+              // Editing the box by hand ends history browsing and returns to a
+              // live evaluation of whatever is now typed.
+              if (root.browsingHistory) {
+                root.browsingHistory = false
+                root.historyIndex = -1
+              }
               if (root.expression !== text) {
                 root.expression = text
-                root.historyIndex = -1
                 root.scheduleEvaluation()
               }
             }
@@ -743,11 +800,8 @@ Item {
               } else if ((event.modifiers & Qt.ControlModifier) && (event.key === Qt.Key_0 || (event.key >= Qt.Key_1 && event.key <= Qt.Key_9))) {
                 root.acceptHistoryRow(CalcModel.historyIndexForKey(event.key))
                 event.accepted = true
-              } else if (event.key === Qt.Key_Up) {
-                root.moveHistory(-1)
-                event.accepted = true
-              } else if (event.key === Qt.Key_Down) {
-                root.moveHistory(1)
+              } else if (event.key === Qt.Key_Down || event.key === Qt.Key_Up) {
+                root.moveHistory(CalcModel.historyStepForKey(event.key))
                 event.accepted = true
               } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                 root.accept(Boolean(event.modifiers & Qt.AltModifier))
@@ -761,8 +815,8 @@ Item {
             anchors.rightMargin: Style.spacing.controlPaddingX
             anchors.verticalCenter: parent.verticalCenter
             width: Math.min(parent.width * 0.5, implicitWidth)
-            visible: root.resultVisible
-            text: root.copied ? "Copied" : root.result
+            visible: root.shownResultVisible
+            text: root.copied ? "Copied" : root.shownResult
             // A qalc answer is data, not markup: never let Qt sniff it as rich
             // text, which would turn a crafted expression into an <img> fetch.
             textFormat: Text.PlainText
@@ -889,6 +943,11 @@ Item {
           spacing: Style.spacing.xs
           currentIndex: root.historyIndex
           boundsBehavior: Flickable.StopAtBounds
+          // Keyboard browsing must keep the selected row on screen when the
+          // history is longer than the visible area.
+          onCurrentIndexChanged: {
+            if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
+          }
 
           delegate: Rectangle {
             required property int index
