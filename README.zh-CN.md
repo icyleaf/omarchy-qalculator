@@ -137,7 +137,7 @@ rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/qalculator"
 | :-------------- | :----------------------------------------------------------------------------------------------- |
 | `manifest.json` | `kinds: ["overlay"]`、`activation: "on-demand"`、`keepLoaded: true`。                            |
 | `Overlay.qml`   | 覆盖层本体：输入框、实时答案、历史列表、qalc 进程、剪贴板进程、依赖探测。                        |
-| `CalcModel.js`  | 纯 JS 接缝层：历史解析 / 去重 / 截断、文本清洗、输出上限、结果清洗、求值门控，以及帮助速查数据。 |
+| `CalcModel.js`  | 纯 JS 接缝层：历史解析 / 去重 / 截断、文本清洗、输出上限、结果清洗、求值门控、覆盖层纵向布局几何，以及帮助速查数据。 |
 | `tests/`        | 覆盖 `CalcModel.js` 的 QML 测试套件，以及面向 QML 表层面的 `audit.sh`。                          |
 
 历史记录保存在 `${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/qalculator/history.json`，仅在提交时原子写入——半截的按键输入不会落盘。插件目录以 `0700` 创建并修复，文件为 `0600`；首次在新布局下运行会把位于旧扁平路径（`omarchy/qalculator-history.json`）的历史迁移过来，随后删除旧文件。

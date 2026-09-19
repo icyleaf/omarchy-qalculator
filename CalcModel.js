@@ -242,6 +242,57 @@ function addHistoryEntry(entries, entry, limit) {
   return capHistory(out, limit)
 }
 
+// ── Overlay layout ──────────────────────────────────────────────────────────
+
+// Vertical geometry for the overlay, kept here so it is plain numbers in and
+// plain numbers out rather than a tangle of QML bindings. The input box is
+// pinned to the vertical centre of the panel and the card grows downward only,
+// so a growing history list never moves the input. The lower area (history,
+// help or hint) is capped by the room left before the card's outer bottom would
+// leave the panel, and scrolls internally when its content is taller.
+//
+// Order matters: the cap is derived from `cardTop` before `cardHeight` is
+// derived from the cap, so no output depends on a value it also determines.
+function overlayLayout(input) {
+  if (!input || typeof input !== "object") input = {}
+  var panelHeight = numberOr(input.panelHeight, 0)
+  var gapsOut = numberOr(input.gapsOut, 0)
+  var contentTopInset = numberOr(input.contentTopInset, 0)
+  var contentBottomInset = numberOr(input.contentBottomInset, 0)
+  var inputHeight = numberOr(input.inputHeight, 0)
+  var contentSpacing = numberOr(input.contentSpacing, 0)
+  var noticeBlock = numberOr(input.noticeBlock, 0)
+  var desiredLowerHeight = numberOr(input.desiredLowerHeight, 0)
+
+  // The input's centre sits on the panel's centre, clamped so the card never
+  // starts above the outer gap.
+  var cardTop = Math.max(gapsOut, panelHeight / 2 - contentTopInset - inputHeight / 2)
+
+  // Everything between `cardTop` and the top of the lower area.
+  var fixedBlock = contentTopInset + inputHeight + contentSpacing + noticeBlock + contentBottomInset
+
+  // Room for the lower area before the card would leave the panel.
+  var lowerMaxHeight = Math.max(0, panelHeight - gapsOut - cardTop - fixedBlock)
+
+  var lowerHeight = Math.min(Math.max(0, desiredLowerHeight), lowerMaxHeight)
+  // In the normal case this is exactly `fixedBlock + lowerHeight`. It only
+  // clamps when the panel is shorter than the fixed block (a tiny output or an
+  // extreme font): the card is then held inside the panel and the fixed content
+  // clips within it, the accepted degenerate case rather than an anchor off the
+  // top.
+  var cardHeight = Math.min(fixedBlock + lowerHeight, panelHeight - gapsOut - cardTop)
+  return {
+    cardTop: cardTop,
+    lowerMaxHeight: lowerMaxHeight,
+    lowerHeight: lowerHeight,
+    cardHeight: Math.max(0, cardHeight)
+  }
+}
+
+function numberOr(value, fallback) {
+  return typeof value === "number" && isFinite(value) ? value : fallback
+}
+
 // ── Dependencies ────────────────────────────────────────────────────────────
 
 // Every external command the overlay shells out to, paired with the Arch

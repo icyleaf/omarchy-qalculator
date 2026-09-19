@@ -130,20 +130,30 @@ Item {
   readonly property var missingDeps: CalcModel.missingDependencies(dependencyStates)
   readonly property bool depsMissing: missingDeps.length > 0
   readonly property string dependencyNotice: CalcModel.dependencyNotice(missingDeps)
-  // Tallest a lower section may grow before it starts scrolling.
-  readonly property int maxSectionHeight: Math.max(
-    Style.space(60),
-    panel.height - Style.gapsOut * 2 - contentMargin * 2 - inputHeight - contentSpacing - (depsMissing ? noticeHeight + contentSpacing : 0))
-  readonly property int panelHeight: Math.max(
-    Style.space(80),
-    Math.min(
-      contentMargin * 2 + inputHeight + contentSpacing
-        + (showHistory ? historyHeight : 0)
-        + (showHelp ? Math.min(helpHeight, maxSectionHeight) : 0)
-        + (showHint ? hintHeight : 0)
-        + (depsMissing ? noticeHeight + contentSpacing : 0),
-      panel.height - Style.gapsOut * 2))
-  readonly property int cardHeight: Math.min(panelHeight, panel.height - Style.gapsOut * 2)
+  // Desired height of the lower area for whichever section is showing. History
+  // wants up to seven rows, help the whole reference, hint a single line; the
+  // layout caps whichever is showing to the room left under the input.
+  readonly property int desiredLowerHeight: showHistory ? historyHeight
+    : showHelp ? helpHeight
+    : showHint ? hintHeight
+    : 0
+  // The dependency notice is a fixed block between the input and the lower
+  // area, so it never competes with the lower area for space.
+  readonly property int noticeBlock: depsMissing ? noticeHeight + contentSpacing : 0
+  // All vertical geometry in one place: input pinned to the panel centre, card
+  // grown downward only, lower area capped and scrolled. See CalcModel.
+  readonly property var layout: CalcModel.overlayLayout({
+    "panelHeight": panel.height,
+    "gapsOut": Style.gapsOut,
+    "contentTopInset": card.contentTopInset,
+    "contentBottomInset": card.contentBottomInset,
+    "inputHeight": inputHeight,
+    "contentSpacing": contentSpacing,
+    "noticeBlock": noticeBlock,
+    "desiredLowerHeight": desiredLowerHeight
+  })
+  readonly property int lowerHeight: layout.lowerHeight
+  readonly property int cardHeight: layout.cardHeight
 
   function open(payloadJson) {
     root.opened = true
@@ -737,7 +747,11 @@ Item {
       width: root.cardWidth
       height: root.cardHeight
       radius: root.cornerRadius
-      anchors.centerIn: parent
+      // Horizontal centring only; vertically the input is pinned to the panel
+      // centre and the card grows downward, so the input never moves as the
+      // lower section appears, grows or scrolls.
+      anchors.horizontalCenter: parent.horizontalCenter
+      y: root.layout.cardTop
       color: root.background
       borderSpec: root.borderSpec
       padding: root.contentMargin
@@ -861,7 +875,7 @@ Item {
 
         Flickable {
           width: parent.width
-          height: Math.min(root.helpHeight, root.maxSectionHeight)
+          height: root.lowerHeight
           visible: root.showHelp
           contentWidth: width
           contentHeight: root.helpHeight
@@ -936,7 +950,7 @@ Item {
 
         ListView {
           width: parent.width
-          height: root.historyHeight
+          height: root.lowerHeight
           visible: root.showHistory
           clip: true
           model: root.history
@@ -1023,7 +1037,7 @@ Item {
 
         Text {
           width: parent.width
-          height: root.hintHeight
+          height: root.lowerHeight
           visible: root.showHint
           text: root.depsMissing ? "" : "Ctrl+/ for help  ·  try  2+2  ·  10 usd to gbp"
           textFormat: Text.PlainText

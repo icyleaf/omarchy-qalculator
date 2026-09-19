@@ -137,7 +137,7 @@ The plugin performs no downloads, no package installs and no configuration write
 | :-------------- | :------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `manifest.json` | `kinds: ["overlay"]`, `activation: "on-demand"`, `keepLoaded: true`.                                                                              |
 | `Overlay.qml`   | The overlay: input, live answer, history list, qalc process, clipboard process, dependency probe.                                                 |
-| `CalcModel.js`  | The pure-JS seam: history parsing/dedup/capping, text sanitising, output caps, result cleaning, the evaluation gate, and the help reference data. |
+| `CalcModel.js`  | The pure-JS seam: history parsing/dedup/capping, text sanitising, output caps, result cleaning, the evaluation gate, the overlay's vertical layout geometry, and the help reference data. |
 | `tests/`        | QML test suite covering `CalcModel.js`, plus `audit.sh` for the QML surface.                                                                      |
 
 History is stored at `${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/qalculator/history.json`, written atomically on commit only — partial keystrokes never reach disk. The plugin's directory is created and repaired at `0700`, the file at `0600`. When the new location has no history yet, the first run carries over a history left at the old flat path (`omarchy/qalculator-history.json`) and removes it — but only after the new file is written. The old file is left untouched if it holds nothing, if the new location already has history, or if the carry-over write fails.

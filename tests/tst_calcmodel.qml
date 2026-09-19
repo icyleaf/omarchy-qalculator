@@ -390,4 +390,120 @@ TestCase {
     verify(CalcModel.HISTORY_BYTES_MAX > 0)
     verify(CalcModel.HISTORY_BYTES_MAX === Math.floor(CalcModel.HISTORY_BYTES_MAX))
   }
+
+  // ── Overlay layout ───────────────────────────────────────────────────────
+  //
+  // A fixture with generous room, so the cap is not the binding constraint
+  // unless a test deliberately shrinks it.
+  function layoutFixture(overrides) {
+    var base = {
+      panelHeight: 1000,
+      gapsOut: 10,
+      contentTopInset: 8,
+      contentBottomInset: 8,
+      inputHeight: 40,
+      contentSpacing: 10,
+      noticeBlock: 0,
+      desiredLowerHeight: 200
+    }
+    if (overrides) for (var key in overrides) base[key] = overrides[key]
+    return base
+  }
+
+  function test_layoutCentresTheInputOnThePanel() {
+    // The input's centre must land on the panel's centre whenever the panel is
+    // tall enough to centre it without running off the top.
+    var fixtures = [layoutFixture(), layoutFixture({ panelHeight: 1200 }), layoutFixture({ inputHeight: 60 })]
+    for (var i = 0; i < fixtures.length; i++) {
+      var result = CalcModel.overlayLayout(fixtures[i])
+      var inputCentre = result.cardTop + fixtures[i].contentTopInset + fixtures[i].inputHeight / 2
+      fuzzyCompare(inputCentre, fixtures[i].panelHeight / 2, 0.0001)
+    }
+  }
+
+  function test_layoutCapReachesTheBottomGap() {
+    // The lower area's maximum is exactly the room left before the card's outer
+    // bottom would reach the bottom gap.
+    var result = CalcModel.overlayLayout(layoutFixture())
+    var fixture = layoutFixture()
+    var fixedBlock = fixture.contentTopInset + fixture.inputHeight + fixture.contentSpacing
+      + fixture.noticeBlock + fixture.contentBottomInset
+    fuzzyCompare(result.cardTop + fixedBlock + result.lowerMaxHeight, fixture.panelHeight - fixture.gapsOut, 0.0001)
+  }
+
+  function test_layoutKeepsDesiredLowerWhenItFits() {
+    var result = CalcModel.overlayLayout(layoutFixture({ desiredLowerHeight: 200 }))
+    fuzzyCompare(result.lowerHeight, 200, 0.0001)
+  }
+
+  function test_layoutCapsLowerWhenDesiredIsTaller() {
+    var result = CalcModel.overlayLayout(layoutFixture({ desiredLowerHeight: 10000 }))
+    fuzzyCompare(result.lowerHeight, result.lowerMaxHeight, 0.0001)
+  }
+
+  function test_layoutCardHoldsTheLowerAreaAtItsBottom() {
+    // The card's bottom edge sits one content inset below the lower area, so
+    // the lower area is exactly `lowerHeight` tall at the bottom of the card.
+    var result = CalcModel.overlayLayout(layoutFixture())
+    var fixture = layoutFixture()
+    var lowerTop = result.cardTop + fixture.contentTopInset + fixture.inputHeight
+      + fixture.contentSpacing + fixture.noticeBlock
+    fuzzyCompare(lowerTop + result.lowerHeight + fixture.contentBottomInset, result.cardTop + result.cardHeight, 0.0001)
+  }
+
+  function test_layoutCardNeverLeavesThePanel() {
+    var inputs = [
+      layoutFixture(),
+      layoutFixture({ desiredLowerHeight: 10000 }),
+      layoutFixture({ panelHeight: 300 }),
+      layoutFixture({ panelHeight: 130 }),
+      layoutFixture({ panelHeight: 60 }),
+      layoutFixture({ noticeBlock: 30, desiredLowerHeight: 500 })
+    ]
+    for (var i = 0; i < inputs.length; i++) {
+      var result = CalcModel.overlayLayout(inputs[i])
+      verify(result.cardTop >= inputs[i].gapsOut - 0.0001)
+      verify(result.cardTop + result.cardHeight <= inputs[i].panelHeight - inputs[i].gapsOut + 0.0001)
+    }
+  }
+
+  function test_layoutNoticeBlockReducesTheLowerRoom() {
+    var without = CalcModel.overlayLayout(layoutFixture({ noticeBlock: 0 }))
+    var withNotice = CalcModel.overlayLayout(layoutFixture({ noticeBlock: 30 }))
+    fuzzyCompare(withNotice.lowerMaxHeight, without.lowerMaxHeight - 30, 0.0001)
+  }
+
+  function test_layoutEmptyLowerReservesOnlyTheFixedBlock() {
+    var result = CalcModel.overlayLayout(layoutFixture({ desiredLowerHeight: 0 }))
+    fuzzyCompare(result.lowerHeight, 0, 0.0001)
+    fuzzyCompare(result.cardHeight, 66, 0.0001)
+  }
+
+  function test_layoutClampsCardTopToTheTopGap() {
+    // A panel shorter than the input cannot centre it without running off the
+    // top; the card anchors at the top gap instead.
+    var result = CalcModel.overlayLayout(layoutFixture({ panelHeight: 60 }))
+    fuzzyCompare(result.cardTop, 10, 0.0001)
+  }
+
+  function test_layoutShortPanelHasNoNegativeLowerRoom() {
+    var result = CalcModel.overlayLayout(layoutFixture({ panelHeight: 60 }))
+    verify(result.lowerMaxHeight >= 0)
+    verify(result.lowerHeight >= 0)
+  }
+
+  function test_layoutTallerPanelGivesMoreLowerRoom() {
+    var smaller = CalcModel.overlayLayout(layoutFixture({ panelHeight: 800 }))
+    var taller = CalcModel.overlayLayout(layoutFixture({ panelHeight: 1200 }))
+    verify(taller.lowerMaxHeight > smaller.lowerMaxHeight)
+  }
+
+  function test_layoutIgnoresMissingInput() {
+    var result = CalcModel.overlayLayout(null)
+    verify(result !== null)
+    verify(result.cardTop >= 0)
+    verify(result.lowerMaxHeight >= 0)
+    verify(result.lowerHeight >= 0)
+    verify(result.cardHeight >= 0)
+  }
 }
