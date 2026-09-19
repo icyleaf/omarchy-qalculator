@@ -41,7 +41,7 @@ Most desktop calculators are either a full app you have to find and close, or a 
 - **Full qalc reach** — arithmetic, powers, functions, constants, unit conversion and currency (`2+2`, `sqrt(625)`, `29 inches to cm`, `10 usd to gbp`). Offline; qalc uses its cached exchange rates.
 - **Copy on Enter** — <kbd>Enter</kbd> copies the answer and closes. <kbd>Alt</kbd>+<kbd>Enter</kbd> copies and keeps the overlay open for the next calculation.
 - **Persistent history** — the last 50 successful expressions, newest first. Re-computing an expression moves it to the top instead of duplicating it. <kbd>↓</kbd>/<kbd>↑</kbd> walk the list into the input box one entry at a time, keeping the list visible and showing each entry's stored result.
-- **Built-in help** — <kbd>Ctrl</kbd>+<kbd>/</kbd> swaps the history area for a syntax reference (math, percent, conversions, currency, keys), and swaps back.
+- **Built-in help** — <kbd>Ctrl</kbd>+<kbd>/</kbd> swaps the history area for a syntax reference (math, percent, conversions, currency, keys), and swaps back. Both list areas share one seven-row preview height, so swapping them does not resize the card; a taller list scrolls.
 - **Configurable input position** — the input box can sit at the `top`, `center` (default) or `bottom` of the surface. At `bottom` the history and help lists stack above it; otherwise they stack below. Set it in the plugin's settings panel or inline in `shell.json`.
 - **Focused-monitor overlay** — a fullscreen `PanelWindow` on the focused output, matching the emojis and clipboard overlays.
 - **Missing dependencies?** — each external tool is probed once at load; a missing one shows a clickable notice that installs it.

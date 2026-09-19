@@ -119,13 +119,19 @@ Item {
   // fresh evaluation, so what the user sees always matches the highlighted row.
   readonly property string shownResult: browsedEntry ? browsedEntry.result : result
   readonly property bool shownResultVisible: browsingHistory ? browsedEntry !== null : resultVisible
-  readonly property int historyVisibleRows: Math.min(history.length, 7)
+  readonly property int historyVisibleRows: Math.min(history.length, CalcModel.LOWER_PREVIEW_ROWS)
   readonly property int hintHeight: Math.round(Style.font.body * 1.6)
   readonly property int noticeHeight: Math.round(Style.font.body * 1.6)
   readonly property int historyHeight: historyVisibleRows * rowHeight + Math.max(0, historyVisibleRows - 1) * Style.spacing.xs
   readonly property int helpLineHeight: Math.round(Style.font.body * 1.7)
   readonly property int helpRows: CalcModel.helpRowCount()
-  readonly property int helpHeight: helpRows * helpLineHeight
+  // The reference is taller than the history preview, so the two sections would
+  // size differently and the card would grow when Ctrl+/ swaps them. Capping
+  // help at the shared preview height keeps the surface steady; the rest
+  // scrolls. The cap is fixed (see CalcModel.previewHeight), so help still has
+  // height when the history is empty.
+  readonly property int previewHeight: CalcModel.previewHeight(rowHeight, Style.spacing.xs)
+  readonly property int helpHeight: Math.min(helpRows * helpLineHeight, previewHeight)
   readonly property var helpSections: CalcModel.helpSections()
   readonly property var missingDeps: CalcModel.missingDependencies(dependencyStates)
   readonly property bool depsMissing: missingDeps.length > 0
@@ -135,8 +141,9 @@ Item {
   // center). See readSettings() and the settingsReadProc below.
   property string inputPosition: "center"
   // Desired height of the lower area for whichever section is showing. History
-  // wants up to seven rows, help the whole reference, hint a single line; the
-  // layout caps whichever is showing to the room left beside the input.
+  // and help both want up to the same preview height, so swapping them with
+  // Ctrl+/ does not resize the card; hint is a single line. The layout caps
+  // whichever is showing to the room left beside the input.
   readonly property int desiredLowerHeight: showHistory ? historyHeight
     : showHelp ? helpHeight
     : showHint ? hintHeight

@@ -396,6 +396,18 @@ TestCase {
     verify(CalcModel.SETTINGS_BYTES_MAX === Math.floor(CalcModel.SETTINGS_BYTES_MAX))
   }
 
+  function test_previewHeightCountsRowsAndInnerGaps() {
+    // 7 rows of 40 with a 3px gap between them: 7*40 + 6*3, no trailing gap.
+    compare(CalcModel.LOWER_PREVIEW_ROWS, 7)
+    compare(CalcModel.previewHeight(40, 3), 7 * 40 + 6 * 3)
+  }
+
+  function test_previewHeightHandlesZeroGapAndMissingArgs() {
+    compare(CalcModel.previewHeight(20, 0), 7 * 20)
+    compare(CalcModel.previewHeight(0, 0), 0)
+    compare(CalcModel.previewHeight(undefined, undefined), 0)
+  }
+
   // ── Overlay layout ───────────────────────────────────────────────────────
   //
   // A fixture with generous room, so the cap is not the binding constraint

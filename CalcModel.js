@@ -26,6 +26,20 @@ var HISTORY_BYTES_MAX = 65536
 // bounded: an oversized file is rejected rather than materialised.
 var SETTINGS_BYTES_MAX = 262144
 
+// Rows of the lower area (history or help) shown before it scrolls. Bounded
+// here so the history preview and the help reference request the same height:
+// if help asked for its full length instead, swapping the two with Ctrl+/
+// would resize the card.
+var LOWER_PREVIEW_ROWS = 7
+
+// Pixel height of `LOWER_PREVIEW_ROWS` stacked rows of `rowHeight` with `gap`
+// between them (no gap after the last). Both sections size to this ceiling.
+function previewHeight(rowHeight, gap) {
+  var rows = LOWER_PREVIEW_ROWS
+  var step = numberOr(rowHeight, 0)
+  return rows * step + Math.max(0, rows - 1) * numberOr(gap, 0)
+}
+
 // ── State paths ─────────────────────────────────────────────────────────────
 
 // The plugin owns one directory under the Omarchy state root. Omarchy's own
