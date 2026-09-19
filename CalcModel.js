@@ -21,6 +21,11 @@ var RESULT_MAX = 512
 // overflow (it reads cap + 1 bytes).
 var HISTORY_BYTES_MAX = 65536
 
+// Ceiling on the shell.json read. The file also holds the bar layout and every
+// plugin's settings, so it is larger than our own history but must still be
+// bounded: an oversized file is rejected rather than materialised.
+var SETTINGS_BYTES_MAX = 262144
+
 // ── State paths ─────────────────────────────────────────────────────────────
 
 // The plugin owns one directory under the Omarchy state root. Omarchy's own
@@ -244,15 +249,31 @@ function addHistoryEntry(entries, entry, limit) {
 
 // ── Overlay layout ──────────────────────────────────────────────────────────
 
+// Where the input box sits vertically. "center" is the default; "top" and
+// "bottom" pin it near the respective outer gap, with the lower area (history,
+// help or hint) filling the space on the other side.
+var INPUT_POSITIONS = ["top", "center", "bottom"]
+var DEFAULT_INPUT_POSITION = "center"
+
+function normalizeInputPosition(value) {
+  var candidate = String(value === undefined || value === null ? "" : value)
+  for (var i = 0; i < INPUT_POSITIONS.length; i++) {
+    if (INPUT_POSITIONS[i] === candidate) return candidate
+  }
+  return DEFAULT_INPUT_POSITION
+}
+
 // Vertical geometry for the overlay, kept here so it is plain numbers in and
-// plain numbers out rather than a tangle of QML bindings. The input box is
-// pinned to the vertical centre of the panel and the card grows downward only,
-// so a growing history list never moves the input. The lower area (history,
-// help or hint) is capped by the room left before the card's outer bottom would
-// leave the panel, and scrolls internally when its content is taller.
+// plain numbers out rather than a tangle of QML bindings.
 //
-// Order matters: the cap is derived from `cardTop` before `cardHeight` is
-// derived from the cap, so no output depends on a value it also determines.
+// With `position: "center"` the input is pinned to the panel's centre and the
+// card grows downward, so a growing history list never moves the input. With
+// "top" the input sits just under the top gap; with "bottom" the input sits
+// just above the bottom gap and the lower area is placed *above* it instead.
+// `inputY`, `noticeY` and `lowerY` are each block's offset from the card's top
+// edge, so the caller only has to place boxes. In every case the lower area is
+// capped by the room left before the card's outer edge would leave the panel,
+// and scrolls internally when its content is taller.
 function overlayLayout(input) {
   if (!input || typeof input !== "object") input = {}
   var panelHeight = numberOr(input.panelHeight, 0)
@@ -263,34 +284,93 @@ function overlayLayout(input) {
   var contentSpacing = numberOr(input.contentSpacing, 0)
   var noticeBlock = numberOr(input.noticeBlock, 0)
   var desiredLowerHeight = numberOr(input.desiredLowerHeight, 0)
+  var position = normalizeInputPosition(input.position)
 
-  // The input's centre sits on the panel's centre, clamped so the card never
-  // starts above the outer gap.
-  var cardTop = Math.max(gapsOut, panelHeight / 2 - contentTopInset - inputHeight / 2)
-
-  // Everything between `cardTop` and the top of the lower area.
+  // Everything the card holds besides the lower area, including both content
+  // insets and the gap the notice reserves.
   var fixedBlock = contentTopInset + inputHeight + contentSpacing + noticeBlock + contentBottomInset
+  // Tallest the card may be, leaving one outer gap top and bottom.
+  var available = Math.max(0, panelHeight - gapsOut * 2)
 
-  // Room for the lower area before the card would leave the panel.
-  var lowerMaxHeight = Math.max(0, panelHeight - gapsOut - cardTop - fixedBlock)
+  var cardTop = 0
+  var lowerMaxHeight = 0
+
+  if (position === "bottom") {
+    // The input's bottom edge is pinned to the bottom gap, so the lower area
+    // grows upward and its cap is everything the card does not need for the
+    // fixed block.
+    lowerMaxHeight = Math.max(0, available - fixedBlock)
+  } else if (position === "top") {
+    cardTop = gapsOut
+    lowerMaxHeight = Math.max(0, panelHeight - gapsOut - cardTop - fixedBlock)
+  } else {
+    // Center: the input's centre sits on the panel's centre, clamped so the
+    // card never starts above the outer gap.
+    cardTop = Math.max(gapsOut, panelHeight / 2 - contentTopInset - inputHeight / 2)
+    lowerMaxHeight = Math.max(0, panelHeight - gapsOut - cardTop - fixedBlock)
+  }
 
   var lowerHeight = Math.min(Math.max(0, desiredLowerHeight), lowerMaxHeight)
-  // In the normal case this is exactly `fixedBlock + lowerHeight`. It only
-  // clamps when the panel is shorter than the fixed block (a tiny output or an
-  // extreme font): the card is then held inside the panel and the fixed content
-  // clips within it, the accepted degenerate case rather than an anchor off the
-  // top.
-  var cardHeight = Math.min(fixedBlock + lowerHeight, panelHeight - gapsOut - cardTop)
+  var cardHeight = Math.min(fixedBlock + lowerHeight, available)
+
+  if (position === "bottom") {
+    cardTop = Math.max(gapsOut, panelHeight - gapsOut - cardHeight)
+  } else if (position === "center") {
+    // Keep the input centred when the card still fits under it; otherwise slide
+    // the card up until its bottom reaches the bottom gap.
+    cardTop = Math.max(gapsOut, Math.min(cardTop, panelHeight - gapsOut - cardHeight))
+  }
+
+  var lowerAbove = position === "bottom"
+  var inputY = 0
+  var noticeY = 0
+  var lowerY = 0
+  if (lowerAbove) {
+    lowerY = contentTopInset
+    noticeY = lowerY + lowerHeight + contentSpacing
+    inputY = lowerY + lowerHeight + contentSpacing + noticeBlock
+  } else {
+    inputY = contentTopInset
+    noticeY = inputY + inputHeight + contentSpacing
+    lowerY = inputY + inputHeight + contentSpacing + noticeBlock
+  }
+
   return {
     cardTop: cardTop,
     lowerMaxHeight: lowerMaxHeight,
     lowerHeight: lowerHeight,
+    inputY: inputY,
+    noticeY: noticeY,
+    lowerY: lowerY,
     cardHeight: Math.max(0, cardHeight)
   }
 }
 
 function numberOr(value, fallback) {
   return typeof value === "number" && isFinite(value) ? value : fallback
+}
+
+// ── Settings ────────────────────────────────────────────────────────────────
+
+// Read this plugin's inline settings from the shell.json document. Every key is
+// optional and unknown keys are ignored, matching the shell's one-entry-inline
+// settings model: the plugin entry is found by id in the top-level plugins[].
+function parseSettings(raw, pluginId) {
+  var out = { inputPosition: DEFAULT_INPUT_POSITION }
+  var config = null
+  try {
+    config = JSON.parse(String(raw === undefined || raw === null ? "" : raw))
+  } catch (e) {
+    return out
+  }
+  if (!config || !Array.isArray(config.plugins)) return out
+  for (var i = 0; i < config.plugins.length; i++) {
+    var entry = config.plugins[i]
+    if (!entry || entry.id !== pluginId) continue
+    if (entry.inputPosition !== undefined) out.inputPosition = normalizeInputPosition(entry.inputPosition)
+    break
+  }
+  return out
 }
 
 // ── Dependencies ────────────────────────────────────────────────────────────

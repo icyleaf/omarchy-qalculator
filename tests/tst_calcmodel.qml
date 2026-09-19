@@ -391,6 +391,11 @@ TestCase {
     verify(CalcModel.HISTORY_BYTES_MAX === Math.floor(CalcModel.HISTORY_BYTES_MAX))
   }
 
+  function test_settingsBytesMaxIsAPositiveInt() {
+    verify(CalcModel.SETTINGS_BYTES_MAX > 0)
+    verify(CalcModel.SETTINGS_BYTES_MAX === Math.floor(CalcModel.SETTINGS_BYTES_MAX))
+  }
+
   // ── Overlay layout ───────────────────────────────────────────────────────
   //
   // A fixture with generous room, so the cap is not the binding constraint
@@ -505,5 +510,163 @@ TestCase {
     verify(result.lowerMaxHeight >= 0)
     verify(result.lowerHeight >= 0)
     verify(result.cardHeight >= 0)
+  }
+
+  // ── Input position ───────────────────────────────────────────────────────
+
+  function test_normalizeInputPositionAcceptsTheThreeOptions() {
+    compare(CalcModel.normalizeInputPosition("top"), "top")
+    compare(CalcModel.normalizeInputPosition("center"), "center")
+    compare(CalcModel.normalizeInputPosition("bottom"), "bottom")
+  }
+
+  function test_normalizeInputPositionDefaultsToCenter() {
+    compare(CalcModel.normalizeInputPosition(undefined), "center")
+    compare(CalcModel.normalizeInputPosition(null), "center")
+    compare(CalcModel.normalizeInputPosition(""), "center")
+    compare(CalcModel.normalizeInputPosition("middle"), "center")
+    compare(CalcModel.normalizeInputPosition("TOP"), "center")
+    compare(CalcModel.normalizeInputPosition(42), "center")
+  }
+
+  function test_layoutTopPinsTheInputNearTheTopGap() {
+    var fixture = layoutFixture({ position: "top" })
+    var result = CalcModel.overlayLayout(fixture)
+    fuzzyCompare(result.cardTop, fixture.gapsOut, 0.0001)
+    // The lower area sits below the input.
+    verify(result.lowerY > result.inputY)
+  }
+
+  function test_layoutTopGivesMoreLowerRoomThanCenter() {
+    var top = CalcModel.overlayLayout(layoutFixture({ position: "top" }))
+    var center = CalcModel.overlayLayout(layoutFixture({ position: "center" }))
+    verify(top.lowerMaxHeight > center.lowerMaxHeight)
+  }
+
+  function test_layoutBottomPinsTheInputNearTheBottomGap() {
+    var fixture = layoutFixture({ position: "bottom" })
+    var result = CalcModel.overlayLayout(fixture)
+    var inputBottom = result.cardTop + result.inputY + fixture.inputHeight
+    fuzzyCompare(inputBottom, fixture.panelHeight - fixture.gapsOut - fixture.contentBottomInset, 0.0001)
+    // The lower area sits above the input.
+    verify(result.lowerY < result.inputY)
+  }
+
+  function test_layoutBottomPutsTheLowerAreaAboveTheInput() {
+    var fixture = layoutFixture({ position: "bottom" })
+    var result = CalcModel.overlayLayout(fixture)
+    // The lower area occupies the card between the top inset and the input.
+    var lowerTop = result.cardTop + fixture.contentTopInset
+    var inputTop = result.cardTop + result.inputY
+    fuzzyCompare(result.lowerY, fixture.contentTopInset, 0.0001)
+    verify(lowerTop + result.lowerHeight <= inputTop + 0.0001)
+  }
+
+  function test_layoutCenterIsTheDefaultPosition() {
+    var implicit = CalcModel.overlayLayout(layoutFixture())
+    var explicit = CalcModel.overlayLayout(layoutFixture({ position: "center" }))
+    fuzzyCompare(implicit.cardTop, explicit.cardTop, 0.0001)
+    fuzzyCompare(implicit.cardHeight, explicit.cardHeight, 0.0001)
+    // Center stacks input then lower area, like top.
+    verify(implicit.lowerY > implicit.inputY)
+  }
+
+  function test_layoutAllPositionsKeepTheCardOnThePanel() {
+    var positions = ["top", "center", "bottom"]
+    for (var p = 0; p < positions.length; p++) {
+      var inputs = [
+        layoutFixture({ position: positions[p] }),
+        layoutFixture({ position: positions[p], desiredLowerHeight: 10000 }),
+        layoutFixture({ position: positions[p], panelHeight: 300 }),
+        layoutFixture({ position: positions[p], panelHeight: 130 }),
+        layoutFixture({ position: positions[p], noticeBlock: 30, desiredLowerHeight: 500 })
+      ]
+      for (var i = 0; i < inputs.length; i++) {
+        var result = CalcModel.overlayLayout(inputs[i])
+        verify(result.cardTop >= inputs[i].gapsOut - 0.0001)
+        verify(result.cardTop + result.cardHeight <= inputs[i].panelHeight - inputs[i].gapsOut + 0.0001)
+      }
+    }
+  }
+
+  function test_layoutBottomCapsTheLowerAreaToTheRoomAboveTheInput() {
+    var result = CalcModel.overlayLayout(layoutFixture({ position: "bottom", desiredLowerHeight: 10000 }))
+    var fixture = layoutFixture({ position: "bottom", desiredLowerHeight: 10000 })
+    fuzzyCompare(result.lowerMaxHeight, result.lowerHeight, 0.0001)
+    // The card is held between the two outer gaps.
+    fuzzyCompare(result.cardTop, fixture.gapsOut, 0.0001)
+  }
+
+  // ── Block offsets ────────────────────────────────────────────────────────
+
+  function test_layoutTopStacksInputNoticeLowerTopToBottom() {
+    var fixture = layoutFixture({ position: "top", noticeBlock: 20 })
+    var result = CalcModel.overlayLayout(fixture)
+    fuzzyCompare(result.inputY, fixture.contentTopInset, 0.0001)
+    fuzzyCompare(result.noticeY, fixture.contentTopInset + fixture.inputHeight + fixture.contentSpacing, 0.0001)
+    // noticeBlock already carries the notice's trailing gap.
+    fuzzyCompare(result.lowerY, result.noticeY + fixture.noticeBlock, 0.0001)
+  }
+
+  function test_layoutBottomStacksLowerNoticeInputTopToBottom() {
+    var fixture = layoutFixture({ position: "bottom", noticeBlock: 20 })
+    var result = CalcModel.overlayLayout(fixture)
+    fuzzyCompare(result.lowerY, fixture.contentTopInset, 0.0001)
+    fuzzyCompare(result.noticeY, fixture.contentTopInset + result.lowerHeight + fixture.contentSpacing, 0.0001)
+    fuzzyCompare(result.inputY, result.noticeY + fixture.noticeBlock, 0.0001)
+  }
+
+  function test_layoutOffsetsStayInsideTheCard() {
+    var positions = ["top", "center", "bottom"]
+    for (var p = 0; p < positions.length; p++) {
+      var fixture = layoutFixture({ position: positions[p], noticeBlock: 20 })
+      var result = CalcModel.overlayLayout(fixture)
+      verify(result.inputY >= fixture.contentTopInset - 0.0001)
+      verify(result.inputY + fixture.inputHeight <= result.cardHeight - fixture.contentBottomInset + 0.0001)
+      verify(result.lowerY >= fixture.contentTopInset - 0.0001)
+      verify(result.lowerY + result.lowerHeight <= result.cardHeight - fixture.contentBottomInset + 0.0001)
+    }
+  }
+
+  function test_layoutBottomGrowsUpwardFromTheBottomGap() {
+    // With the input pinned to the bottom gap, adding lower content must not
+    // move the input; the card's top edge moves instead.
+    var compact = CalcModel.overlayLayout(layoutFixture({ position: "bottom", desiredLowerHeight: 0 }))
+    var tall = CalcModel.overlayLayout(layoutFixture({ position: "bottom", desiredLowerHeight: 200 }))
+    var shortInputBottom = compact.cardTop + compact.inputY + 40
+    var tallInputBottom = tall.cardTop + tall.inputY + 40
+    fuzzyCompare(shortInputBottom, tallInputBottom, 0.0001)
+    verify(tall.cardTop < compact.cardTop)
+  }
+
+  // ── Settings ─────────────────────────────────────────────────────────────
+
+  function test_parseSettingsReadsInputPositionForMatchingPlugin() {
+    var raw = JSON.stringify({
+      plugins: [
+        { id: "other.plugin", inputPosition: "top" },
+        { id: "icyleaf.qalculator", inputPosition: "bottom" }
+      ]
+    })
+    var settings = CalcModel.parseSettings(raw, "icyleaf.qalculator")
+    compare(settings.inputPosition, "bottom")
+  }
+
+  function test_parseSettingsDefaultsWhenEntryIsAbsent() {
+    var raw = JSON.stringify({ plugins: [{ id: "other.plugin", inputPosition: "top" }] })
+    compare(CalcModel.parseSettings(raw, "icyleaf.qalculator").inputPosition, "center")
+  }
+
+  function test_parseSettingsDefaultsOnGarbage() {
+    compare(CalcModel.parseSettings("", "icyleaf.qalculator").inputPosition, "center")
+    compare(CalcModel.parseSettings("not json", "icyleaf.qalculator").inputPosition, "center")
+    compare(CalcModel.parseSettings("{}", "icyleaf.qalculator").inputPosition, "center")
+    compare(CalcModel.parseSettings(null, "icyleaf.qalculator").inputPosition, "center")
+    compare(CalcModel.parseSettings(JSON.stringify({ plugins: "nope" }), "icyleaf.qalculator").inputPosition, "center")
+  }
+
+  function test_parseSettingsIgnoresAnInvalidPosition() {
+    var raw = JSON.stringify({ plugins: [{ id: "icyleaf.qalculator", inputPosition: "sideways" }] })
+    compare(CalcModel.parseSettings(raw, "icyleaf.qalculator").inputPosition, "center")
   }
 }

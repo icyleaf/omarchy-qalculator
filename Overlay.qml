@@ -130,9 +130,13 @@ Item {
   readonly property var missingDeps: CalcModel.missingDependencies(dependencyStates)
   readonly property bool depsMissing: missingDeps.length > 0
   readonly property string dependencyNotice: CalcModel.dependencyNotice(missingDeps)
+  // Vertical placement of the input, read from this plugin's entry in
+  // shell.json ("top", "center" or "bottom"; anything else falls back to
+  // center). See readSettings() and the settingsReadProc below.
+  property string inputPosition: "center"
   // Desired height of the lower area for whichever section is showing. History
   // wants up to seven rows, help the whole reference, hint a single line; the
-  // layout caps whichever is showing to the room left under the input.
+  // layout caps whichever is showing to the room left beside the input.
   readonly property int desiredLowerHeight: showHistory ? historyHeight
     : showHelp ? helpHeight
     : showHint ? hintHeight
@@ -140,8 +144,9 @@ Item {
   // The dependency notice is a fixed block between the input and the lower
   // area, so it never competes with the lower area for space.
   readonly property int noticeBlock: depsMissing ? noticeHeight + contentSpacing : 0
-  // All vertical geometry in one place: input pinned to the panel centre, card
-  // grown downward only, lower area capped and scrolled. See CalcModel.
+  // All vertical geometry in one place: the input pinned by the chosen
+  // position, the lower area placed on the other side and capped, the card
+  // sized to hold both. See CalcModel.
   readonly property var layout: CalcModel.overlayLayout({
     "panelHeight": panel.height,
     "gapsOut": Style.gapsOut,
@@ -150,7 +155,8 @@ Item {
     "inputHeight": inputHeight,
     "contentSpacing": contentSpacing,
     "noticeBlock": noticeBlock,
-    "desiredLowerHeight": desiredLowerHeight
+    "desiredLowerHeight": desiredLowerHeight,
+    "position": inputPosition
   })
   readonly property int lowerHeight: layout.lowerHeight
   readonly property int cardHeight: layout.cardHeight
@@ -167,6 +173,9 @@ Item {
     // Cheap recheck: only re-probe what was known to be missing, so a tool
     // installed while the overlay was closed is picked up on the next summon.
     if (root.depsMissing) root.checkDependencies()
+    // Re-read the configured input position so a shell.json edit lands on the
+    // next summon without a plugin reload.
+    root.readSettings()
     // TextField.text is set imperatively: a QML binding would be broken the
     // moment the user types, and then stop resetting on the next open.
     Qt.callLater(function() {
@@ -460,9 +469,36 @@ Item {
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
+  // shell.json is the shell's own config; we only ever read our entry from it,
+  // through the same descriptor-bound, size-capped reader the history uses (a
+  // FileView would follow a planted symlink, block on a FIFO and collect
+  // without a ceiling). The position is re-read on each open so an edit lands
+  // on the next summon without a full plugin reload.
+  readonly property string shellConfigPath:
+    (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") || "") + "/.config") + "/omarchy/shell.json"
+  readonly property int settingsBytesMax: CalcModel.SETTINGS_BYTES_MAX
+
+  function readSettings() {
+    settingsReadProc.buffer = ""
+    settingsReadProc.overflow = false
+    settingsReadProc.command = [
+      "/usr/bin/dd", "if=" + root.shellConfigPath,
+      "iflag=nofollow,nonblock,count_bytes,fullblock",
+      "bs=1", "count=" + (root.settingsBytesMax + 1), "status=none"
+    ]
+    settingsReadProc.running = true
+  }
+
+  function settingsLoaded(code) {
+    var raw = code === 0 && !settingsReadProc.overflow ? settingsReadProc.buffer : ""
+    settingsReadProc.buffer = ""
+    root.inputPosition = CalcModel.parseSettings(raw, (root.manifest && root.manifest.id) || "icyleaf.qalculator").inputPosition
+  }
+
   Component.onCompleted: {
     root.checkDependencies()
     root.readHistory()
+    root.readSettings()
   }
 
   // Reader: `dd` with O_NOFOLLOW|O_NONBLOCK, capped at historyBytesMax + 1 so an
@@ -488,6 +524,43 @@ Item {
     onExited: function(code) {
       historyReadTimeout.stop()
       root.historyLoaded(code)
+    }
+  }
+
+  // Reader for shell.json, same descriptor-bound, size-capped shape as the
+  // history reader. Output is discarded on overflow; parseSettings then falls
+  // back to the default position.
+  Process {
+    id: settingsReadProc
+    command: []
+    property string buffer: ""
+    property bool overflow: false
+    clearEnvironment: true
+    environment: ({ "PATH": "/usr/bin:/bin", "LC_ALL": "C" })
+    onStarted: settingsReadTimeout.restart()
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        if (settingsReadProc.overflow) return
+        settingsReadProc.buffer += chunk
+        if (settingsReadProc.buffer.length > root.settingsBytesMax) settingsReadProc.overflow = true
+      }
+    }
+    onExited: function(code) {
+      settingsReadTimeout.stop()
+      root.settingsLoaded(code)
+    }
+  }
+
+  Timer {
+    id: settingsReadTimeout
+    interval: root.historyTimeoutMs
+    repeat: false
+    onTriggered: {
+      if (!settingsReadProc.running) return
+      settingsReadProc.signal(15)
+      settingsReadProc.buffer = ""
+      root.settingsLoaded(-1)
     }
   }
 
@@ -758,296 +831,171 @@ Item {
 
       MouseArea { anchors.fill: parent; onClicked: {} }
 
-      Column {
-        anchors.fill: parent
-        anchors.topMargin: card.contentTopInset
-        anchors.rightMargin: card.contentRightInset
-        anchors.bottomMargin: card.contentBottomInset
-        anchors.leftMargin: card.contentLeftInset
-        spacing: root.contentSpacing
+      // Blocks are positioned from the layout result rather than a Column, so
+      // "top"/"center" can stack input → notice → list and "bottom" can mirror
+      // it with list → notice → input. Each block's offset is measured from the
+      // card's top edge, already including the content insets.
+      Item {
+        id: inputRow
+        width: parent.width - card.contentLeftInset - card.contentRightInset
+        height: root.inputHeight
+        x: card.contentLeftInset
+        y: root.layout.inputY
 
-        Item {
-          width: parent.width
-          height: root.inputHeight
-
-          TextField {
-            id: input
-            anchors.fill: parent
-            foreground: root.foreground
-            accent: Color.accent
-            font.pixelSize: Style.font.title
-            placeholderText: "Type an expression…"
-            // Bound the ingress at the widget itself; CalcModel re-checks the
-            // same cap before anything is stored or rendered.
-            maximumLength: root.expressionLimit
-            onTextChanged: {
-              // A programmatic fill while browsing is not user typing: keep the
-              // browse state and do not re-evaluate.
-              if (root.syncingInput) return
-              // A paste can carry control characters; drop them at the widget so
-              // nothing invisible ever reaches the model or the history file.
-              var cleaned = CalcModel.sanitizeText(text)
-              if (cleaned !== text) {
-                input.text = cleaned
-                return
-              }
-              // Editing the box by hand ends history browsing and returns to a
-              // live evaluation of whatever is now typed.
-              if (root.browsingHistory) {
-                root.browsingHistory = false
-                root.historyIndex = -1
-              }
-              if (root.expression !== text) {
-                root.expression = text
-                root.scheduleEvaluation()
-              }
+        TextField {
+          id: input
+          anchors.fill: parent
+          foreground: root.foreground
+          accent: Color.accent
+          font.pixelSize: Style.font.title
+          placeholderText: "Type an expression…"
+          // Bound the ingress at the widget itself; CalcModel re-checks the
+          // same cap before anything is stored or rendered.
+          maximumLength: root.expressionLimit
+          onTextChanged: {
+            // A programmatic fill while browsing is not user typing: keep the
+            // browse state and do not re-evaluate.
+            if (root.syncingInput) return
+            // A paste can carry control characters; drop them at the widget so
+            // nothing invisible ever reaches the model or the history file.
+            var cleaned = CalcModel.sanitizeText(text)
+            if (cleaned !== text) {
+              input.text = cleaned
+              return
             }
-
-            Keys.priority: Keys.BeforeItem
-            Keys.onPressed: function(event) {
-              if (event.key === Qt.Key_Escape) {
-                root.dismiss()
-                event.accepted = true
-              } else if (event.key === Qt.Key_Slash && (event.modifiers & Qt.ControlModifier)) {
-                root.toggleHelp()
-                event.accepted = true
-              } else if ((event.modifiers & Qt.ControlModifier) && (event.key === Qt.Key_0 || (event.key >= Qt.Key_1 && event.key <= Qt.Key_9))) {
-                root.acceptHistoryRow(CalcModel.historyIndexForKey(event.key))
-                event.accepted = true
-              } else if (event.key === Qt.Key_Down || event.key === Qt.Key_Up) {
-                root.moveHistory(CalcModel.historyStepForKey(event.key))
-                event.accepted = true
-              } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                root.accept(Boolean(event.modifiers & Qt.AltModifier))
-                event.accepted = true
-              }
+            // Editing the box by hand ends history browsing and returns to a
+            // live evaluation of whatever is now typed.
+            if (root.browsingHistory) {
+              root.browsingHistory = false
+              root.historyIndex = -1
+            }
+            if (root.expression !== text) {
+              root.expression = text
+              root.scheduleEvaluation()
             }
           }
 
-          Text {
-            anchors.right: parent.right
-            anchors.rightMargin: Style.spacing.controlPaddingX
-            anchors.verticalCenter: parent.verticalCenter
-            width: Math.min(parent.width * 0.5, implicitWidth)
-            visible: root.shownResultVisible
-            text: root.copied ? "Copied" : root.shownResult
-            // A qalc answer is data, not markup: never let Qt sniff it as rich
-            // text, which would turn a crafted expression into an <img> fetch.
-            textFormat: Text.PlainText
-            color: root.copied ? Color.accent : root.selectedText
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.title
-            font.weight: Font.DemiBold
-            horizontalAlignment: Text.AlignRight
-            elide: Text.ElideRight
-          }
-        }
-
-        Rectangle {
-          width: parent.width
-          height: root.noticeHeight
-          visible: root.depsMissing
-          radius: Style.cornerRadius
-          color: root.installingDependencies ? root.selectedBackground : "transparent"
-
-          Text {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            leftPadding: Style.spacing.sm
-            rightPadding: Style.spacing.sm
-            text: root.installingDependencies ? "Installing in a floating terminal…" : root.dependencyNotice
-            textFormat: Text.PlainText
-            color: Color.urgent
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
-          }
-
-          MouseArea {
-            anchors.fill: parent
-            enabled: !root.installingDependencies
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.installDependencies()
-          }
-        }
-
-        Flickable {
-          width: parent.width
-          height: root.lowerHeight
-          visible: root.showHelp
-          contentWidth: width
-          contentHeight: root.helpHeight
-          clip: true
-          boundsBehavior: Flickable.StopAtBounds
-
-          Column {
-            width: parent.width
-            spacing: 0
-
-            Repeater {
-              model: root.helpSections
-
-              Column {
-                required property var modelData
-                width: parent.width
-                spacing: 0
-
-                Text {
-                  width: parent.width
-                  height: root.helpLineHeight
-                  text: modelData.title
-                  textFormat: Text.PlainText
-                  color: Color.accent
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  font.weight: Font.DemiBold
-                  verticalAlignment: Text.AlignVCenter
-                }
-
-                Repeater {
-                  model: modelData.rows
-
-                  Item {
-                    required property var modelData
-                    width: parent.width
-                    height: root.helpLineHeight
-
-                    Text {
-                      id: syntaxText
-                      anchors.left: parent.left
-                      anchors.leftMargin: Style.spacing.rowPaddingX
-                      anchors.verticalCenter: parent.verticalCenter
-                      text: modelData.syntax
-                      textFormat: Text.PlainText
-                      color: root.foreground
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.body
-                    }
-
-                    Text {
-                      anchors.left: syntaxText.right
-                      anchors.leftMargin: Style.spacing.lg
-                      anchors.right: parent.right
-                      anchors.rightMargin: Style.spacing.rowPaddingX
-                      anchors.verticalCenter: parent.verticalCenter
-                      text: modelData.note
-                      textFormat: Text.PlainText
-                      color: root.foreground
-                      opacity: 0.55
-                      horizontalAlignment: Text.AlignRight
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                      elide: Text.ElideRight
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        ListView {
-          width: parent.width
-          height: root.lowerHeight
-          visible: root.showHistory
-          clip: true
-          model: root.history
-          spacing: Style.spacing.xs
-          currentIndex: root.historyIndex
-          boundsBehavior: Flickable.StopAtBounds
-          // Keyboard browsing must keep the selected row on screen when the
-          // history is longer than the visible area.
-          onCurrentIndexChanged: {
-            if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
-          }
-
-          delegate: Rectangle {
-            required property int index
-            required property var modelData
-            width: ListView.view.width
-            height: root.rowHeight
-            radius: root.cornerRadius
-            color: index === root.historyIndex ? root.selectedBackground : "transparent"
-
-            readonly property bool hasShortcut: index < 10
-
-            Rectangle {
-              id: shortcutBadge
-              anchors.left: parent.left
-              anchors.leftMargin: Style.spacing.sm
-              anchors.verticalCenter: parent.verticalCenter
-              width: root.shortcutSlotWidth
-              height: shortcutLabel.implicitHeight + Style.spacing.xxs * 2
-              radius: Style.space(3)
-              color: root.selectedBackground
-              visible: parent.hasShortcut
-
-              Text {
-                id: shortcutLabel
-                anchors.centerIn: parent
-                text: CalcModel.historyShortcutLabel(index)
-                textFormat: Text.PlainText
-                color: root.foreground
-                opacity: 0.65
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.weight: Font.Bold
-              }
-            }
-
-            Text {
-              anchors.left: parent.left
-              // Fixed slot for every row, badge or not, so expressions line up.
-              anchors.leftMargin: Style.spacing.sm + root.shortcutSlotWidth + Style.spacing.sm
-              anchors.right: resultLabel.left
-              anchors.rightMargin: Style.spacing.md
-              anchors.verticalCenter: parent.verticalCenter
-              text: modelData.expression
-              textFormat: Text.PlainText
-              color: index === root.historyIndex ? root.selectedText : root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              elide: Text.ElideRight
-            }
-
-            Text {
-              id: resultLabel
-              anchors.right: parent.right
-              anchors.rightMargin: Style.spacing.rowPaddingX
-              anchors.verticalCenter: parent.verticalCenter
-              width: Math.min(parent.width * 0.5, implicitWidth)
-              text: modelData.result
-              textFormat: Text.PlainText
-              color: root.foreground
-              opacity: 0.85
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              horizontalAlignment: Text.AlignRight
-              elide: Text.ElideRight
-            }
-
-            MouseArea {
-              anchors.fill: parent
-              onClicked: root.copyResult(modelData.result)
+          Keys.priority: Keys.BeforeItem
+          Keys.onPressed: function(event) {
+            if (event.key === Qt.Key_Escape) {
+              root.dismiss()
+              event.accepted = true
+            } else if (event.key === Qt.Key_Slash && (event.modifiers & Qt.ControlModifier)) {
+              root.toggleHelp()
+              event.accepted = true
+            } else if ((event.modifiers & Qt.ControlModifier) && (event.key === Qt.Key_0 || (event.key >= Qt.Key_1 && event.key <= Qt.Key_9))) {
+              root.acceptHistoryRow(CalcModel.historyIndexForKey(event.key))
+              event.accepted = true
+            } else if (event.key === Qt.Key_Down || event.key === Qt.Key_Up) {
+              root.moveHistory(CalcModel.historyStepForKey(event.key))
+              event.accepted = true
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              root.accept(Boolean(event.modifiers & Qt.AltModifier))
+              event.accepted = true
             }
           }
         }
 
         Text {
-          width: parent.width
-          height: root.lowerHeight
-          visible: root.showHint
-          text: root.depsMissing ? "" : "Ctrl+/ for help  ·  try  2+2  ·  10 usd to gbp"
+          anchors.right: parent.right
+          anchors.rightMargin: Style.spacing.controlPaddingX
+          anchors.verticalCenter: parent.verticalCenter
+          width: Math.min(parent.width * 0.5, implicitWidth)
+          visible: root.shownResultVisible
+          text: root.copied ? "Copied" : root.shownResult
+          // A qalc answer is data, not markup: never let Qt sniff it as rich
+          // text, which would turn a crafted expression into an <img> fetch.
           textFormat: Text.PlainText
-          color: root.foreground
-          opacity: 0.58
+          color: root.copied ? Color.accent : root.selectedText
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.title
+          font.weight: Font.DemiBold
+          horizontalAlignment: Text.AlignRight
+          elide: Text.ElideRight
+        }
+      }
+
+      Rectangle {
+        id: notice
+        width: parent.width - card.contentLeftInset - card.contentRightInset
+        height: root.noticeHeight
+        x: card.contentLeftInset
+        y: root.layout.noticeY
+        visible: root.depsMissing
+        radius: Style.cornerRadius
+        color: root.installingDependencies ? root.selectedBackground : "transparent"
+
+        Text {
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          leftPadding: Style.spacing.sm
+          rightPadding: Style.spacing.sm
+          text: root.installingDependencies ? "Installing in a floating terminal…" : root.dependencyNotice
+          textFormat: Text.PlainText
+          color: Color.urgent
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
           verticalAlignment: Text.AlignVCenter
           elide: Text.ElideRight
         }
+
+        MouseArea {
+          anchors.fill: parent
+          enabled: !root.installingDependencies
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.installDependencies()
+        }
+      }
+
+      HelpList {
+        id: helpList
+        width: parent.width - card.contentLeftInset - card.contentRightInset
+        height: root.lowerHeight
+        x: card.contentLeftInset
+        y: root.layout.lowerY
+        visible: root.showHelp
+        sections: root.helpSections
+        lineHeight: root.helpLineHeight
+        foreground: root.foreground
+        accent: Color.accent
+        fontFamily: root.fontFamily
+      }
+
+      HistoryList {
+        id: historyList
+        width: parent.width - card.contentLeftInset - card.contentRightInset
+        height: root.lowerHeight
+        x: card.contentLeftInset
+        y: root.layout.lowerY
+        visible: root.showHistory
+        entries: root.history
+        highlightedIndex: root.historyIndex
+        rowHeight: root.rowHeight
+        shortcutSlotWidth: root.shortcutSlotWidth
+        cornerRadius: root.cornerRadius
+        foreground: root.foreground
+        selectedText: root.selectedText
+        selectedBackground: root.selectedBackground
+        fontFamily: root.fontFamily
+        onResultClicked: function(value) { root.copyResult(value) }
+      }
+
+      Text {
+        id: hint
+        width: parent.width - card.contentLeftInset - card.contentRightInset
+        height: root.lowerHeight
+        x: card.contentLeftInset
+        y: root.layout.lowerY
+        visible: root.showHint
+        text: root.depsMissing ? "" : "Ctrl+/ for help  ·  try  2+2  ·  10 usd to gbp"
+        textFormat: Text.PlainText
+        color: root.foreground
+        opacity: 0.58
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        verticalAlignment: Text.AlignVCenter
+        elide: Text.ElideRight
       }
     }
   }

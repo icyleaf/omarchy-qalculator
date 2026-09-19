@@ -42,6 +42,7 @@ Most desktop calculators are either a full app you have to find and close, or a 
 - **Copy on Enter** — <kbd>Enter</kbd> copies the answer and closes. <kbd>Alt</kbd>+<kbd>Enter</kbd> copies and keeps the overlay open for the next calculation.
 - **Persistent history** — the last 50 successful expressions, newest first. Re-computing an expression moves it to the top instead of duplicating it. <kbd>↓</kbd>/<kbd>↑</kbd> walk the list into the input box one entry at a time, keeping the list visible and showing each entry's stored result.
 - **Built-in help** — <kbd>Ctrl</kbd>+<kbd>/</kbd> swaps the history area for a syntax reference (math, percent, conversions, currency, keys), and swaps back.
+- **Configurable input position** — the input box can sit at the `top`, `center` (default) or `bottom` of the surface. At `bottom` the history and help lists stack above it; otherwise they stack below. Set it in the plugin's settings panel or inline in `shell.json`.
 - **Focused-monitor overlay** — a fullscreen `PanelWindow` on the focused output, matching the emojis and clipboard overlays.
 - **Missing dependencies?** — each external tool is probed once at load; a missing one shows a clickable notice that installs it.
 
@@ -97,6 +98,24 @@ The Shift/Alt/Ctrl resize variants of that key can be left intact.
 
 ---
 
+## Input position
+
+The input box can be pinned to the `top` or `bottom` of the surface, or left at the `center` (the default). At `bottom` the history and help lists render **above** the input; at `top` and `center` they render below. The lists are capped to the space left on their side and scroll internally, so the input never moves as the list grows.
+
+Set it either through the plugin's settings panel, or inline on the plugin's entry in `~/.config/omarchy/shell.json`:
+
+```json
+{
+  "plugins": [
+    { "id": "icyleaf.qalculator", "inputPosition": "bottom" }
+  ]
+}
+```
+
+The value is re-read on each summon, so an edit takes effect the next time you open the overlay without a shell restart. Anything other than `top`, `center` or `bottom` falls back to `center`.
+
+---
+
 ## Update & Removal
 
 - **Update Plugin**:
@@ -135,9 +154,11 @@ The plugin performs no downloads, no package installs and no configuration write
 
 | File            | Role                                                                                                                                              |
 | :-------------- | :------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `manifest.json` | `kinds: ["overlay"]`, `activation: "on-demand"`, `keepLoaded: true`.                                                                              |
-| `Overlay.qml`   | The overlay: input, live answer, history list, qalc process, clipboard process, dependency probe.                                                 |
-| `CalcModel.js`  | The pure-JS seam: history parsing/dedup/capping, text sanitising, output caps, result cleaning, the evaluation gate, the overlay's vertical layout geometry, and the help reference data. |
+| `manifest.json` | `kinds: ["overlay"]`, `activation: "on-demand"`, `keepLoaded: true`, plus the `inputPosition` settings schema.                                              |
+| `Overlay.qml`   | The overlay: input, live answer, notice, qalc process, clipboard process, dependency probe, settings reader, and block placement.                          |
+| `HistoryList.qml` | The scrollable history rows, placed above or below the input by the overlay.                                                                            |
+| `HelpList.qml`  | The scrollable syntax reference, placed by the same rule.                                                                                                  |
+| `CalcModel.js`  | The pure-JS seam: history parsing/dedup/capping, text sanitising, output caps, result cleaning, the evaluation gate, the overlay's vertical layout geometry, settings parsing, and the help reference data. |
 | `tests/`        | QML test suite covering `CalcModel.js`, plus `audit.sh` for the QML surface.                                                                      |
 
 History is stored at `${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/qalculator/history.json`, written atomically on commit only — partial keystrokes never reach disk. The plugin's directory is created and repaired at `0700`, the file at `0600`. When the new location has no history yet, the first run carries over a history left at the old flat path (`omarchy/qalculator-history.json`) and removes it — but only after the new file is written. The old file is left untouched if it holds nothing, if the new location already has history, or if the carry-over write fails.

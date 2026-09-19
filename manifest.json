@@ -13,5 +13,20 @@
   "keepLoaded": true,
   "entryPoints": {
     "overlay": "Overlay.qml"
+  },
+  "settings": {
+    "defaults": {
+      "inputPosition": "center"
+    },
+    "schema": [
+      {
+        "key": "inputPosition",
+        "type": "enum",
+        "label": "Input box position",
+        "description": "Where the input box sits. The history and help lists fill the opposite side.",
+        "options": ["top", "center", "bottom"],
+        "defaultValue": "center"
+      }
+    ]
   }
 }

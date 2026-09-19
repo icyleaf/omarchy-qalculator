@@ -42,6 +42,7 @@
 - **回车即复制** — <kbd>Enter</kbd> 复制答案并关闭；<kbd>Alt</kbd>+<kbd>Enter</kbd> 复制后保持打开，继续下一次计算。
 - **持久化历史** — 保留最近 50 条成功表达式，新的在前。重复计算同一表达式会把它移到顶部而非产生重复项。<kbd>↓</kbd>/<kbd>↑</kbd> 会按时间倒序逐条把历史填入输入框，列表保持可见，并显示该条已存的结果。
 - **内置帮助** — <kbd>Ctrl</kbd>+<kbd>/</kbd> 将历史区域切换为语法速查（数学、百分比、换算、货币、按键），再按一次切回。
+- **输入框位置可配置** — 输入框可固定在 `top`、`center`(默认)或 `bottom`。设为 `bottom` 时，历史与帮助列表显示在输入框上方；其余位置显示在下方。可在插件设置面板中设置，或直接写入 `shell.json`。
 - **聚焦显示器覆盖层** — 在当前输出上铺满的 `PanelWindow`，与 emoji、剪贴板覆盖层风格一致。
 - **依赖缺失提示** — 每个外部工具在加载时探测一次；缺失时会显示可点击的提示项并完成安装。
 
@@ -97,6 +98,24 @@ o.bind("SUPER + code:21", "Qalculator", "omarchy-shell shell toggle icyleaf.qalc
 
 ---
 
+## 输入框位置
+
+输入框可固定在界面 `top`（顶部）、`bottom`（底部），或保持默认的 `center`（居中）。设为 `bottom` 时，历史与帮助列表渲染在输入框**上方**；`top` 与 `center` 则渲染在下方。列表会按其所在侧剩余空间截断并内部滚动，因此输入框不会随列表增长而移动。
+
+可通过插件设置面板设置，或直接写在该插件于 `~/.config/omarchy/shell.json` 中的条目上：
+
+```json
+{
+  "plugins": [
+    { "id": "icyleaf.qalculator", "inputPosition": "bottom" }
+  ]
+}
+```
+
+该值在每次唤出时重新读取，因此修改后下次打开即可生效，无需重启 shell。除 `top`、`center`、`bottom` 之外的取值都会回退为 `center`。
+
+---
+
 ## 更新与卸载
 
 - **更新插件**：
@@ -135,9 +154,11 @@ rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/qalculator"
 
 | 文件            | 职责                                                                                             |
 | :-------------- | :----------------------------------------------------------------------------------------------- |
-| `manifest.json` | `kinds: ["overlay"]`、`activation: "on-demand"`、`keepLoaded: true`。                            |
-| `Overlay.qml`   | 覆盖层本体：输入框、实时答案、历史列表、qalc 进程、剪贴板进程、依赖探测。                        |
-| `CalcModel.js`  | 纯 JS 接缝层：历史解析 / 去重 / 截断、文本清洗、输出上限、结果清洗、求值门控、覆盖层纵向布局几何，以及帮助速查数据。 |
+| `manifest.json` | `kinds: ["overlay"]`、`activation: "on-demand"`、`keepLoaded: true`，以及 `inputPosition` 设置 schema。 |
+| `Overlay.qml`   | 覆盖层本体：输入框、实时答案、依赖提示、qalc 进程、剪贴板进程、依赖探测、设置读取与区块布局。     |
+| `HistoryList.qml` | 可滚动的历史列表，由覆盖层决定放在输入框上方或下方。                                            |
+| `HelpList.qml`  | 可滚动的语法速查列表，遵循同一放置规则。                                                          |
+| `CalcModel.js`  | 纯 JS 接缝层：历史解析 / 去重 / 截断、文本清洗、输出上限、结果清洗、求值门控、覆盖层纵向布局几何、设置解析，以及帮助速查数据。 |
 | `tests/`        | 覆盖 `CalcModel.js` 的 QML 测试套件，以及面向 QML 表层面的 `audit.sh`。                          |
 
 历史记录保存在 `${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/qalculator/history.json`，仅在提交时原子写入——半截的按键输入不会落盘。插件目录以 `0700` 创建并修复，文件为 `0600`；首次在新布局下运行会把位于旧扁平路径（`omarchy/qalculator-history.json`）的历史迁移过来，随后删除旧文件。
