@@ -1,0 +1,53 @@
+# Development tasks for the Qalculator Omarchy plugin.
+#
+# The installed plugin lives in its own clone at
+# ~/.config/omarchy/plugins/icyleaf.qalculator. `dev-sync` copies this working
+# tree over it (works without pushing, unlike a git reset), and `dev-deploy`
+# syncs then restarts the shell so the change is live.
+
+[tasks.test]
+description = "Run the QML test suite"
+run = "cd tests && qmltestrunner -input tst_calcmodel.qml"
+
+[tasks.audit]
+description = "Run the marketplace static audit"
+run = "./tests/audit.sh"
+
+[tasks.lint]
+description = "Static-check the QML and JS surface"
+run = "qmllint Overlay.qml HistoryList.qml HelpList.qml CalcModel.js"
+
+[tasks.check]
+description = "Lint, audit and test the plugin"
+depends = ["lint", "audit", "test"]
+
+[tasks.dev-sync]
+description = "Copy this working tree into the installed plugin directory"
+run = """
+PLUGIN_DIR="$HOME/.config/omarchy/plugins/icyleaf.qalculator"
+mkdir -p "$PLUGIN_DIR"
+rsync -a --exclude '.git' ./ "$PLUGIN_DIR/"
+"""
+
+[tasks.dev-restart-omarchy]
+description = "Restart the Omarchy shell (QML changes need a restart)"
+run = "omarchy-restart-shell"
+
+[tasks.dev-deploy]
+description = "Sync the plugin into ~/.config and restart the shell"
+depends = ["dev-sync"]
+depends_post = ["dev-restart-omarchy"]
+
+[tasks.version]
+description = "Show the plugin version from manifest.json"
+run = "grep -E '\"version\"' manifest.json"
+
+[tasks.bump]
+description = "Bump the plugin version in manifest.json and commit"
+usage = 'arg "<version>" help="New version, e.g. 0.2.0"'
+run = '''
+VERSION="${usage_version}"
+sed -i -E "s/\"version\": .*/\"version\": \"$VERSION\",/" manifest.json
+git add manifest.json
+git commit -m "bump: v$VERSION"
+'''

@@ -192,6 +192,8 @@ qmltestrunner -input tst_calcmodel.qml
 ./audit.sh
 ```
 
+The same checks are wired as [mise](https://mise.jdx.dev) tasks: `mise run check` runs the linter, the audit and the test suite. `mise run dev-deploy` copies this working tree into the installed plugin directory and restarts the shell, which QML changes need to take effect.
+
 ---
 
 ## Contributing

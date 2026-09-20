@@ -192,6 +192,8 @@ qmltestrunner -input tst_calcmodel.qml
 ./audit.sh
 ```
 
+以上检查同样接成了 [mise](https://mise.jdx.dev) 任务：`mise run check` 会依次执行静态检查、审计与测试套件。`mise run dev-deploy` 会把当前工作区同步到已安装的插件目录并重启 shell —— QML 改动必须重启才生效。
+
 ---
 
 ## 贡献指南
