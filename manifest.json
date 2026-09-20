@@ -16,15 +16,15 @@
   },
   "settings": {
     "defaults": {
-      "inputPosition": "center"
+      "position": "center"
     },
     "schema": [
       {
-        "key": "inputPosition",
+        "key": "position",
         "type": "enum",
         "label": "Input box position",
-        "description": "Where the input box sits. The history and help lists fill the opposite side.",
-        "options": ["top", "center", "bottom"],
+        "description": "Where the input box sits: top, center, bottom, or window (the whole card centred on the screen, input at its top). The history and help lists fill the opposite side.",
+        "options": ["top", "center", "bottom", "window"],
         "defaultValue": "center"
       }
     ]

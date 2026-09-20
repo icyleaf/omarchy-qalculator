@@ -137,9 +137,9 @@ Item {
   readonly property bool depsMissing: missingDeps.length > 0
   readonly property string dependencyNotice: CalcModel.dependencyNotice(missingDeps)
   // Vertical placement of the input, read from this plugin's entry in
-  // shell.json ("top", "center" or "bottom"; anything else falls back to
-  // center). See readSettings() and the settingsReadProc below.
-  property string inputPosition: "center"
+  // shell.json ("top", "center", "bottom" or "window"; anything else falls
+  // back to center). See readSettings() and the settingsReadProc below.
+  property string position: "center"
   // Desired height of the lower area for whichever section is showing. History
   // and help both want up to the same preview height, so swapping them with
   // Ctrl+/ does not resize the card; hint is a single line. The layout caps
@@ -163,7 +163,7 @@ Item {
     "contentSpacing": contentSpacing,
     "noticeBlock": noticeBlock,
     "desiredLowerHeight": desiredLowerHeight,
-    "position": inputPosition
+    "position": position
   })
   readonly property int lowerHeight: layout.lowerHeight
   readonly property int cardHeight: layout.cardHeight
@@ -499,7 +499,7 @@ Item {
   function settingsLoaded(code) {
     var raw = code === 0 && !settingsReadProc.overflow ? settingsReadProc.buffer : ""
     settingsReadProc.buffer = ""
-    root.inputPosition = CalcModel.parseSettings(raw, (root.manifest && root.manifest.id) || "icyleaf.qalculator").inputPosition
+    root.position = CalcModel.parseSettings(raw, (root.manifest && root.manifest.id) || "icyleaf.qalculator").position
   }
 
   Component.onCompleted: {

@@ -265,16 +265,17 @@ function addHistoryEntry(entries, entry, limit) {
 
 // Where the input box sits vertically. "center" is the default; "top" and
 // "bottom" pin it near the respective outer gap, with the lower area (history,
-// help or hint) filling the space on the other side.
-var INPUT_POSITIONS = ["top", "center", "bottom"]
-var DEFAULT_INPUT_POSITION = "center"
+// help or hint) filling the space on the other side. "window" centres the whole
+// card on the panel (the original layout), with the input at the card's top.
+var POSITIONS = ["top", "center", "bottom", "window"]
+var DEFAULT_POSITION = "center"
 
-function normalizeInputPosition(value) {
+function normalizePosition(value) {
   var candidate = String(value === undefined || value === null ? "" : value)
-  for (var i = 0; i < INPUT_POSITIONS.length; i++) {
-    if (INPUT_POSITIONS[i] === candidate) return candidate
+  for (var i = 0; i < POSITIONS.length; i++) {
+    if (POSITIONS[i] === candidate) return candidate
   }
-  return DEFAULT_INPUT_POSITION
+  return DEFAULT_POSITION
 }
 
 // Vertical geometry for the overlay, kept here so it is plain numbers in and
@@ -283,11 +284,12 @@ function normalizeInputPosition(value) {
 // With `position: "center"` the input is pinned to the panel's centre and the
 // card grows downward, so a growing history list never moves the input. With
 // "top" the input sits just under the top gap; with "bottom" the input sits
-// just above the bottom gap and the lower area is placed *above* it instead.
-// `inputY`, `noticeY` and `lowerY` are each block's offset from the card's top
-// edge, so the caller only has to place boxes. In every case the lower area is
-// capped by the room left before the card's outer edge would leave the panel,
-// and scrolls internally when its content is taller.
+// just above the bottom gap and the lower area is placed *above* it instead;
+// with "window" the whole card is centred on the panel and the input sits at
+// its top. `inputY`, `noticeY` and `lowerY` are each block's offset from the
+// card's top edge, so the caller only has to place boxes. In every case the
+// lower area is capped by the room left before the card's outer edge would
+// leave the panel, and scrolls internally when its content is taller.
 function overlayLayout(input) {
   if (!input || typeof input !== "object") input = {}
   var panelHeight = numberOr(input.panelHeight, 0)
@@ -298,7 +300,7 @@ function overlayLayout(input) {
   var contentSpacing = numberOr(input.contentSpacing, 0)
   var noticeBlock = numberOr(input.noticeBlock, 0)
   var desiredLowerHeight = numberOr(input.desiredLowerHeight, 0)
-  var position = normalizeInputPosition(input.position)
+  var position = normalizePosition(input.position)
 
   // Everything the card holds besides the lower area, including both content
   // insets and the gap the notice reserves.
@@ -314,9 +316,11 @@ function overlayLayout(input) {
     // grows upward and its cap is everything the card does not need for the
     // fixed block.
     lowerMaxHeight = Math.max(0, available - fixedBlock)
-  } else if (position === "top") {
+  } else if (position === "top" || position === "window") {
+    // The card starts at the top gap (window then slides it to centre below);
+    // the lower area takes the room down to the bottom gap.
     cardTop = gapsOut
-    lowerMaxHeight = Math.max(0, panelHeight - gapsOut - cardTop - fixedBlock)
+    lowerMaxHeight = Math.max(0, available - fixedBlock)
   } else {
     // Center: the input's centre sits on the panel's centre, clamped so the
     // card never starts above the outer gap.
@@ -329,6 +333,9 @@ function overlayLayout(input) {
 
   if (position === "bottom") {
     cardTop = Math.max(gapsOut, panelHeight - gapsOut - cardHeight)
+  } else if (position === "window") {
+    // Centre the whole card, then clamp so it never leaves the panel.
+    cardTop = Math.max(gapsOut, Math.min((panelHeight - cardHeight) / 2, panelHeight - gapsOut - cardHeight))
   } else if (position === "center") {
     // Keep the input centred when the card still fits under it; otherwise slide
     // the card up until its bottom reaches the bottom gap.
@@ -370,7 +377,7 @@ function numberOr(value, fallback) {
 // optional and unknown keys are ignored, matching the shell's one-entry-inline
 // settings model: the plugin entry is found by id in the top-level plugins[].
 function parseSettings(raw, pluginId) {
-  var out = { inputPosition: DEFAULT_INPUT_POSITION }
+  var out = { position: DEFAULT_POSITION }
   var config = null
   try {
     config = JSON.parse(String(raw === undefined || raw === null ? "" : raw))
@@ -381,7 +388,7 @@ function parseSettings(raw, pluginId) {
   for (var i = 0; i < config.plugins.length; i++) {
     var entry = config.plugins[i]
     if (!entry || entry.id !== pluginId) continue
-    if (entry.inputPosition !== undefined) out.inputPosition = normalizeInputPosition(entry.inputPosition)
+    if (entry.position !== undefined) out.position = normalizePosition(entry.position)
     break
   }
   return out
