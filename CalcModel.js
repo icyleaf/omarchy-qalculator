@@ -263,12 +263,13 @@ function addHistoryEntry(entries, entry, limit) {
 
 // ── Overlay layout ──────────────────────────────────────────────────────────
 
-// Where the input box sits vertically. "center" is the default; "top" and
-// "bottom" pin it near the respective outer gap, with the lower area (history,
-// help or hint) filling the space on the other side. "window" centres the whole
-// card on the panel (the original layout), with the input at the card's top.
+// Where the input box sits vertically. "window" is the default (the original
+// layout: the whole card is centred and the input sits at its top); "top" and
+// "bottom" pin the input near the respective edge margin, with the lower area
+// (history, help or hint) filling the space on the other side; "center" pins
+// the input itself to the panel's centre.
 var POSITIONS = ["top", "center", "bottom", "window"]
-var DEFAULT_POSITION = "center"
+var DEFAULT_POSITION = "window"
 
 // Fraction of the panel height left clear above "top" and below "bottom".
 // Flush against the edge looks cramped, so those two hold the card back by a

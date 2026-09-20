@@ -430,7 +430,11 @@ TestCase {
   function test_layoutCentresTheInputOnThePanel() {
     // The input's centre must land on the panel's centre whenever the panel is
     // tall enough to centre it without running off the top.
-    var fixtures = [layoutFixture(), layoutFixture({ panelHeight: 1200 }), layoutFixture({ inputHeight: 60 })]
+    var fixtures = [
+      layoutFixture({ position: "center" }),
+      layoutFixture({ position: "center", panelHeight: 1200 }),
+      layoutFixture({ position: "center", inputHeight: 60 })
+    ]
     for (var i = 0; i < fixtures.length; i++) {
       var result = CalcModel.overlayLayout(fixtures[i])
       var inputCentre = result.cardTop + fixtures[i].contentTopInset + fixtures[i].inputHeight / 2
@@ -441,7 +445,7 @@ TestCase {
   function test_layoutCapReachesTheBottomGap() {
     // The lower area's maximum is exactly the room left before the card's outer
     // bottom would reach the bottom gap.
-    var result = CalcModel.overlayLayout(layoutFixture())
+    var result = CalcModel.overlayLayout(layoutFixture({ position: "center" }))
     var fixture = layoutFixture()
     var fixedBlock = fixture.contentTopInset + fixture.inputHeight + fixture.contentSpacing
       + fixture.noticeBlock + fixture.contentBottomInset
@@ -533,13 +537,13 @@ TestCase {
     compare(CalcModel.normalizePosition("window"), "window")
   }
 
-  function test_normalizePositionDefaultsToCenter() {
-    compare(CalcModel.normalizePosition(undefined), "center")
-    compare(CalcModel.normalizePosition(null), "center")
-    compare(CalcModel.normalizePosition(""), "center")
-    compare(CalcModel.normalizePosition("middle"), "center")
-    compare(CalcModel.normalizePosition("TOP"), "center")
-    compare(CalcModel.normalizePosition(42), "center")
+  function test_normalizePositionDefaultsToWindow() {
+    compare(CalcModel.normalizePosition(undefined), "window")
+    compare(CalcModel.normalizePosition(null), "window")
+    compare(CalcModel.normalizePosition(""), "window")
+    compare(CalcModel.normalizePosition("middle"), "window")
+    compare(CalcModel.normalizePosition("TOP"), "window")
+    compare(CalcModel.normalizePosition(42), "window")
   }
 
   function test_edgeMarginUsesTheConfiguredPercent() {
@@ -611,12 +615,12 @@ TestCase {
     verify(lowerTop + result.lowerHeight <= inputTop + 0.0001)
   }
 
-  function test_layoutCenterIsTheDefaultPosition() {
+  function test_layoutWindowIsTheDefaultPosition() {
     var implicit = CalcModel.overlayLayout(layoutFixture())
-    var explicit = CalcModel.overlayLayout(layoutFixture({ position: "center" }))
+    var explicit = CalcModel.overlayLayout(layoutFixture({ position: "window" }))
     fuzzyCompare(implicit.cardTop, explicit.cardTop, 0.0001)
     fuzzyCompare(implicit.cardHeight, explicit.cardHeight, 0.0001)
-    // Center stacks input then lower area, like top.
+    // Window stacks input then lower area, like top.
     verify(implicit.lowerY > implicit.inputY)
   }
 
@@ -726,20 +730,20 @@ TestCase {
 
   function test_parseSettingsDefaultsWhenEntryIsAbsent() {
     var raw = JSON.stringify({ plugins: [{ id: "other.plugin", position: "top" }] })
-    compare(CalcModel.parseSettings(raw, "icyleaf.qalculator").position, "center")
+    compare(CalcModel.parseSettings(raw, "icyleaf.qalculator").position, "window")
   }
 
   function test_parseSettingsDefaultsOnGarbage() {
-    compare(CalcModel.parseSettings("", "icyleaf.qalculator").position, "center")
-    compare(CalcModel.parseSettings("not json", "icyleaf.qalculator").position, "center")
-    compare(CalcModel.parseSettings("{}", "icyleaf.qalculator").position, "center")
-    compare(CalcModel.parseSettings(null, "icyleaf.qalculator").position, "center")
-    compare(CalcModel.parseSettings(JSON.stringify({ plugins: "nope" }), "icyleaf.qalculator").position, "center")
+    compare(CalcModel.parseSettings("", "icyleaf.qalculator").position, "window")
+    compare(CalcModel.parseSettings("not json", "icyleaf.qalculator").position, "window")
+    compare(CalcModel.parseSettings("{}", "icyleaf.qalculator").position, "window")
+    compare(CalcModel.parseSettings(null, "icyleaf.qalculator").position, "window")
+    compare(CalcModel.parseSettings(JSON.stringify({ plugins: "nope" }), "icyleaf.qalculator").position, "window")
   }
 
   function test_parseSettingsIgnoresAnInvalidPosition() {
     var raw = JSON.stringify({ plugins: [{ id: "icyleaf.qalculator", position: "sideways" }] })
-    compare(CalcModel.parseSettings(raw, "icyleaf.qalculator").position, "center")
+    compare(CalcModel.parseSettings(raw, "icyleaf.qalculator").position, "window")
   }
 
   function test_parseSettingsAcceptsWindow() {

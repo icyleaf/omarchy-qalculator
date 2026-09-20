@@ -16,7 +16,7 @@
   },
   "settings": {
     "defaults": {
-      "position": "center",
+      "position": "window",
       "edgeMargin": 5
     },
     "schema": [
@@ -24,9 +24,9 @@
         "key": "position",
         "type": "enum",
         "label": "Input box position",
-        "description": "Where the input box sits: top and bottom hold a margin from the screen edge, center pins the input to the screen centre, window centres the whole card. The history and help lists fill the opposite side.",
+        "description": "Where the input box sits: window centres the whole card (default), top and bottom hold a margin from the screen edge, center pins the input to the screen centre. The history and help lists fill the opposite side.",
         "options": ["top", "center", "bottom", "window"],
-        "defaultValue": "center"
+        "defaultValue": "window"
       },
       {
         "key": "edgeMargin",

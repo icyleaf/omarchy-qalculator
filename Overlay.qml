@@ -138,8 +138,8 @@ Item {
   readonly property string dependencyNotice: CalcModel.dependencyNotice(missingDeps)
   // Vertical placement of the input, read from this plugin's entry in
   // shell.json ("top", "center", "bottom" or "window"; anything else falls
-  // back to center). See readSettings() and the settingsReadProc below.
-  property string position: "center"
+  // back to window). See readSettings() and the settingsReadProc below.
+  property string position: "window"
   // Clear margin from the screen edge for top/bottom, as a percentage of the
   // panel height. Read alongside position; 5 means 5%.
   property real edgeMargin: 5
