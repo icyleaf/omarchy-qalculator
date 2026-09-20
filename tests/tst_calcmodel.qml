@@ -542,25 +542,47 @@ TestCase {
     compare(CalcModel.normalizePosition(42), "center")
   }
 
-  function test_edgeMarginUsesTenPercentOfThePanel() {
-    // 1000px panel -> 100px margin.
-    compare(CalcModel.edgeMargin(1000, 5), 100)
-    compare(CalcModel.edgeMargin(1080, 5), 108)
+  function test_edgeMarginUsesTheConfiguredPercent() {
+    // 5% of 1000 -> 50; 10% of 1000 -> 100.
+    compare(CalcModel.edgeMargin(1000, 5, 5), 50)
+    compare(CalcModel.edgeMargin(1000, 5, 10), 100)
+    compare(CalcModel.edgeMargin(1080, 5, 5), 54)
+  }
+
+  function test_edgeMarginDefaultsToFivePercent() {
+    compare(CalcModel.DEFAULT_EDGE_MARGIN, 5)
+    compare(CalcModel.edgeMargin(1000, 5), 50)
+    compare(CalcModel.edgeMargin(1000, 5, undefined), 50)
+  }
+
+  function test_normalizeEdgeMarginClampsAndDefaults() {
+    compare(CalcModel.normalizeEdgeMargin(12), 12)
+    compare(CalcModel.normalizeEdgeMargin(0), 0)
+    compare(CalcModel.normalizeEdgeMargin(-3), 5)
+    compare(CalcModel.normalizeEdgeMargin(999), 50)
+    compare(CalcModel.normalizeEdgeMargin("wide"), 5)
+    compare(CalcModel.normalizeEdgeMargin(undefined), 5)
   }
 
   function test_edgeMarginNeverGoesBelowTheOuterGap() {
     // A tiny panel would round to less than the gap; the gap wins.
-    compare(CalcModel.edgeMargin(40, 5), 5)
-    compare(CalcModel.edgeMargin(0, 5), 5)
+    compare(CalcModel.edgeMargin(40, 5, 5), 5)
+    compare(CalcModel.edgeMargin(0, 5, 5), 5)
     compare(CalcModel.edgeMargin(undefined, 7), 7)
   }
 
   function test_layoutTopLeavesAnEdgeMarginAboveTheCard() {
-    var fixture = layoutFixture({ position: "top" })
+    var fixture = layoutFixture({ position: "top", edgeMarginPercent: 5 })
     var result = CalcModel.overlayLayout(fixture)
-    fuzzyCompare(result.cardTop, CalcModel.edgeMargin(fixture.panelHeight, fixture.gapsOut), 0.0001)
+    fuzzyCompare(result.cardTop, CalcModel.edgeMargin(fixture.panelHeight, fixture.gapsOut, 5), 0.0001)
     // The lower area sits below the input.
     verify(result.lowerY > result.inputY)
+  }
+
+  function test_layoutEdgeMarginIsConfigurable() {
+    var small = CalcModel.overlayLayout(layoutFixture({ position: "top", edgeMarginPercent: 2 }))
+    var large = CalcModel.overlayLayout(layoutFixture({ position: "top", edgeMarginPercent: 20 }))
+    verify(large.cardTop > small.cardTop)
   }
 
   function test_layoutTopGivesMoreLowerRoomThanCenter() {
@@ -570,10 +592,10 @@ TestCase {
   }
 
   function test_layoutBottomLeavesAnEdgeMarginBelowTheCard() {
-    var fixture = layoutFixture({ position: "bottom" })
+    var fixture = layoutFixture({ position: "bottom", edgeMarginPercent: 5 })
     var result = CalcModel.overlayLayout(fixture)
     var inputBottom = result.cardTop + result.inputY + fixture.inputHeight
-    var margin = CalcModel.edgeMargin(fixture.panelHeight, fixture.gapsOut)
+    var margin = CalcModel.edgeMargin(fixture.panelHeight, fixture.gapsOut, 5)
     fuzzyCompare(inputBottom, fixture.panelHeight - margin - fixture.contentBottomInset, 0.0001)
     // The lower area sits above the input.
     verify(result.lowerY < result.inputY)
@@ -640,11 +662,11 @@ TestCase {
   }
 
   function test_layoutBottomCapsTheLowerAreaToTheRoomAboveTheInput() {
-    var result = CalcModel.overlayLayout(layoutFixture({ position: "bottom", desiredLowerHeight: 10000 }))
-    var fixture = layoutFixture({ position: "bottom", desiredLowerHeight: 10000 })
+    var result = CalcModel.overlayLayout(layoutFixture({ position: "bottom", desiredLowerHeight: 10000, edgeMarginPercent: 5 }))
+    var fixture = layoutFixture({ position: "bottom", desiredLowerHeight: 10000, edgeMarginPercent: 5 })
     fuzzyCompare(result.lowerMaxHeight, result.lowerHeight, 0.0001)
     // The card is held against the top edge margin.
-    fuzzyCompare(result.cardTop, CalcModel.edgeMargin(fixture.panelHeight, fixture.gapsOut), 0.0001)
+    fuzzyCompare(result.cardTop, CalcModel.edgeMargin(fixture.panelHeight, fixture.gapsOut, 5), 0.0001)
   }
 
   // ── Block offsets ────────────────────────────────────────────────────────
@@ -723,5 +745,16 @@ TestCase {
   function test_parseSettingsAcceptsWindow() {
     var raw = JSON.stringify({ plugins: [{ id: "icyleaf.qalculator", position: "window" }] })
     compare(CalcModel.parseSettings(raw, "icyleaf.qalculator").position, "window")
+  }
+
+  function test_parseSettingsReadsEdgeMargin() {
+    var raw = JSON.stringify({ plugins: [{ id: "icyleaf.qalculator", edgeMargin: 12 }] })
+    compare(CalcModel.parseSettings(raw, "icyleaf.qalculator").edgeMargin, 12)
+  }
+
+  function test_parseSettingsDefaultsEdgeMarginToFive() {
+    compare(CalcModel.parseSettings("{}", "icyleaf.qalculator").edgeMargin, 5)
+    var raw = JSON.stringify({ plugins: [{ id: "icyleaf.qalculator", edgeMargin: -1 }] })
+    compare(CalcModel.parseSettings(raw, "icyleaf.qalculator").edgeMargin, 5)
   }
 }

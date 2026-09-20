@@ -140,6 +140,9 @@ Item {
   // shell.json ("top", "center", "bottom" or "window"; anything else falls
   // back to center). See readSettings() and the settingsReadProc below.
   property string position: "center"
+  // Clear margin from the screen edge for top/bottom, as a percentage of the
+  // panel height. Read alongside position; 5 means 5%.
+  property real edgeMargin: 5
   // Desired height of the lower area for whichever section is showing. History
   // and help both want up to the same preview height, so swapping them with
   // Ctrl+/ does not resize the card; hint is a single line. The layout caps
@@ -163,7 +166,8 @@ Item {
     "contentSpacing": contentSpacing,
     "noticeBlock": noticeBlock,
     "desiredLowerHeight": desiredLowerHeight,
-    "position": position
+    "position": position,
+    "edgeMarginPercent": edgeMargin
   })
   readonly property int lowerHeight: layout.lowerHeight
   readonly property int cardHeight: layout.cardHeight
@@ -499,7 +503,9 @@ Item {
   function settingsLoaded(code) {
     var raw = code === 0 && !settingsReadProc.overflow ? settingsReadProc.buffer : ""
     settingsReadProc.buffer = ""
-    root.position = CalcModel.parseSettings(raw, (root.manifest && root.manifest.id) || "icyleaf.qalculator").position
+    var settings = CalcModel.parseSettings(raw, (root.manifest && root.manifest.id) || "icyleaf.qalculator")
+    root.position = settings.position
+    root.edgeMargin = settings.edgeMargin
   }
 
   Component.onCompleted: {

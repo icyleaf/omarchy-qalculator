@@ -272,8 +272,10 @@ var DEFAULT_POSITION = "center"
 
 // Fraction of the panel height left clear above "top" and below "bottom".
 // Flush against the edge looks cramped, so those two hold the card back by a
-// tenth of the screen (never less than the outer gap).
-var EDGE_MARGIN_RATIO = 0.10
+// configurable percentage (never less than the outer gap). The setting is the
+// percentage, so 5 means 5%.
+var DEFAULT_EDGE_MARGIN = 5
+var MAX_EDGE_MARGIN = 50
 
 function normalizePosition(value) {
   var candidate = String(value === undefined || value === null ? "" : value)
@@ -283,9 +285,19 @@ function normalizePosition(value) {
   return DEFAULT_POSITION
 }
 
-// Clear space above a "top" card and below a "bottom" card.
-function edgeMargin(panelHeight, gapsOut) {
-  return Math.max(numberOr(gapsOut, 0), Math.round(numberOr(panelHeight, 0) * EDGE_MARGIN_RATIO))
+// Clamp the configured edge margin (a percentage) into range, falling back to
+// the default for anything non-numeric or negative.
+function normalizeEdgeMargin(value) {
+  var n = Number(value)
+  if (!isFinite(n) || n < 0) return DEFAULT_EDGE_MARGIN
+  return Math.min(n, MAX_EDGE_MARGIN)
+}
+
+// Clear space above a "top" card and below a "bottom" card, as a percentage of
+// the panel height.
+function edgeMargin(panelHeight, gapsOut, percent) {
+  var pct = normalizeEdgeMargin(percent)
+  return Math.max(numberOr(gapsOut, 0), Math.round(numberOr(panelHeight, 0) * pct / 100))
 }
 
 // Vertical geometry for the overlay, kept here so it is plain numbers in and
@@ -312,13 +324,14 @@ function overlayLayout(input) {
   var noticeBlock = numberOr(input.noticeBlock, 0)
   var desiredLowerHeight = numberOr(input.desiredLowerHeight, 0)
   var position = normalizePosition(input.position)
+  var edgeMarginPercent = input.edgeMarginPercent
 
   // Everything the card holds besides the lower area, including both content
   // insets and the gap the notice reserves.
   var fixedBlock = contentTopInset + inputHeight + contentSpacing + noticeBlock + contentBottomInset
 
   var pinned = position === "top" || position === "bottom"
-  var inset = pinned ? edgeMargin(panelHeight, gapsOut) : gapsOut
+  var inset = pinned ? edgeMargin(panelHeight, gapsOut, edgeMarginPercent) : gapsOut
   // Tallest the card may be, leaving the inset clear on both sides.
   var available = Math.max(0, panelHeight - inset * 2)
 
@@ -391,7 +404,7 @@ function numberOr(value, fallback) {
 // optional and unknown keys are ignored, matching the shell's one-entry-inline
 // settings model: the plugin entry is found by id in the top-level plugins[].
 function parseSettings(raw, pluginId) {
-  var out = { position: DEFAULT_POSITION }
+  var out = { position: DEFAULT_POSITION, edgeMargin: DEFAULT_EDGE_MARGIN }
   var config = null
   try {
     config = JSON.parse(String(raw === undefined || raw === null ? "" : raw))
@@ -403,6 +416,7 @@ function parseSettings(raw, pluginId) {
     var entry = config.plugins[i]
     if (!entry || entry.id !== pluginId) continue
     if (entry.position !== undefined) out.position = normalizePosition(entry.position)
+    if (entry.edgeMargin !== undefined) out.edgeMargin = normalizeEdgeMargin(entry.edgeMargin)
     break
   }
   return out

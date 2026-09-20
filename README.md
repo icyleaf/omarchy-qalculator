@@ -42,7 +42,7 @@ Most desktop calculators are either a full app you have to find and close, or a 
 - **Copy on Enter** — <kbd>Enter</kbd> copies the answer and closes. <kbd>Alt</kbd>+<kbd>Enter</kbd> copies and keeps the overlay open for the next calculation.
 - **Persistent history** — the last 50 successful expressions, newest first. Re-computing an expression moves it to the top instead of duplicating it. <kbd>↓</kbd>/<kbd>↑</kbd> walk the list into the input box one entry at a time, keeping the list visible and showing each entry's stored result.
 - **Built-in help** — <kbd>Ctrl</kbd>+<kbd>/</kbd> swaps the history area for a syntax reference (math, percent, conversions, currency, keys), and swaps back. Both list areas share one seven-row preview height, so swapping them does not resize the card; a taller list scrolls.
-- **Configurable input position** — the input box can sit at the `top`, `center` (default) or `bottom` of the surface, or the whole card centred as `window`. At `bottom` the history and help lists stack above it; otherwise they stack below. `top`/`bottom` keep a 10% margin from the screen edge. Set it in the plugin's settings panel or inline in `shell.json`.
+- **Configurable input position** — the input box can sit at the `top`, `center` (default) or `bottom` of the surface, or the whole card centred as `window`. At `bottom` the history and help lists stack above it; otherwise they stack below. `top`/`bottom` keep a configurable edge margin (default 5%). Set both in the plugin's settings panel or inline in `shell.json`.
 - **Focused-monitor overlay** — a fullscreen `PanelWindow` on the focused output, matching the emojis and clipboard overlays.
 - **Missing dependencies?** — each external tool is probed once at load; a missing one shows a clickable notice that installs it.
 
@@ -111,21 +111,21 @@ The `position` setting controls where the input box sits. It is a string enum wi
 
 `window` is the original layout: the whole card is vertically centred, so it grows symmetrically and the input shifts as the list changes. `center` instead keeps the input itself fixed at the screen's centre and grows the card downward. With `bottom`, the lower area stacks above the input and grows upward.
 
-For `top` and `bottom` the card is held back from the screen edge by a margin of 10% of the panel height (never less than the shell's outer gap), so it is not flush against the edge.
+For `top` and `bottom` the card is held back from the screen edge by the `edgeMargin` setting — a percentage of the panel height, default `5` (never less than the shell's outer gap), so it is not flush against the edge. `center` and `window` ignore it.
 
 In every mode the lists are capped to the room left on their side and scroll internally when taller, and the card never leaves the panel.
 
-Set it either through the plugin's settings panel, or inline on the plugin's entry in `~/.config/omarchy/shell.json`:
+Set these either through the plugin's settings panel, or inline on the plugin's entry in `~/.config/omarchy/shell.json`:
 
 ```json
 {
   "plugins": [
-    { "id": "icyleaf.qalculator", "position": "bottom" }
+    { "id": "icyleaf.qalculator", "position": "bottom", "edgeMargin": 5 }
   ]
 }
 ```
 
-The value is re-read on each summon, so an edit takes effect the next time you open the overlay without a shell restart. Any value other than the four above falls back to `center`.
+The values are re-read on each summon, so an edit takes effect the next time you open the overlay without a shell restart. Any `position` other than the four above falls back to `center`, and a non-numeric or negative `edgeMargin` falls back to `5`.
 
 ---
 
@@ -167,7 +167,7 @@ The plugin performs no downloads, no package installs and no configuration write
 
 | File            | Role                                                                                                                                              |
 | :-------------- | :------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `manifest.json` | `kinds: ["overlay"]`, `activation: "on-demand"`, `keepLoaded: true`, plus the `position` settings schema.                                              |
+| `manifest.json` | `kinds: ["overlay"]`, `activation: "on-demand"`, `keepLoaded: true`, plus the `position` and `edgeMargin` settings schema.                                              |
 | `Overlay.qml`   | The overlay: input, live answer, notice, qalc process, clipboard process, dependency probe, settings reader, and block placement.                          |
 | `HistoryList.qml` | The scrollable history rows, placed above or below the input by the overlay.                                                                            |
 | `HelpList.qml`  | The scrollable syntax reference, placed by the same rule.                                                                                                  |

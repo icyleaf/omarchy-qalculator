@@ -42,7 +42,7 @@
 - **回车即复制** — <kbd>Enter</kbd> 复制答案并关闭；<kbd>Alt</kbd>+<kbd>Enter</kbd> 复制后保持打开，继续下一次计算。
 - **持久化历史** — 保留最近 50 条成功表达式，新的在前。重复计算同一表达式会把它移到顶部而非产生重复项。<kbd>↓</kbd>/<kbd>↑</kbd> 会按时间倒序逐条把历史填入输入框，列表保持可见，并显示该条已存的结果。
 - **内置帮助** — <kbd>Ctrl</kbd>+<kbd>/</kbd> 将历史区域切换为语法速查（数学、百分比、换算、货币、按键），再按一次切回。两个列表区共用同一套七行预览高度，因此互相切换不会改变卡片尺寸；更长的列表内部滚动。
-- **输入框位置可配置** — 输入框可固定在 `top`、`center`（默认）或 `bottom`，也可用 `window` 让整张卡片整体居中。设为 `bottom` 时，历史与帮助列表显示在输入框上方；其余位置显示在下方。`top`/`bottom` 会与屏幕边缘保持 10% 面板高度的留白。可在插件设置面板中设置，或直接写入 `shell.json`。
+- **输入框位置可配置** — 输入框可固定在 `top`、`center`（默认）或 `bottom`，也可用 `window` 让整张卡片整体居中。设为 `bottom` 时，历史与帮助列表显示在输入框上方；其余位置显示在下方。`top`/`bottom` 的边缘留白可配置（默认 5%）。两项均可在插件设置面板中设置，或直接写入 `shell.json`。
 - **聚焦显示器覆盖层** — 在当前输出上铺满的 `PanelWindow`，与 emoji、剪贴板覆盖层风格一致。
 - **依赖缺失提示** — 每个外部工具在加载时探测一次；缺失时会显示可点击的提示项并完成安装。
 
@@ -111,7 +111,7 @@ o.bind("SUPER + code:21", "Qalculator", "omarchy-shell shell toggle icyleaf.qalc
 
 `window` 是最初的布局：整张卡片垂直居中，因此列表变化时卡片上下对称生长、输入框会随之移动。`center` 则把输入框本身固定在屏幕正中，卡片只向下生长。`bottom` 时下方区域堆叠在输入框**上方**并向上生长。
 
-`top` 与 `bottom` 下，卡片会与屏幕边缘保持面板高度 10% 的留白（不小于 shell 的外边距），不会紧贴边缘。
+`top` 与 `bottom` 下，卡片与屏幕边缘的留白由 `edgeMargin` 设置控制：占屏幕高度的百分比，默认 `5`（不小于 shell 的外边距），因此不会紧贴边缘；`center` 与 `window` 忽略该项。
 
 所有模式下，列表都会按其所在一侧的剩余空间截断，内容更高时内部滚动，卡片始终不会超出面板。
 
@@ -120,12 +120,12 @@ o.bind("SUPER + code:21", "Qalculator", "omarchy-shell shell toggle icyleaf.qalc
 ```json
 {
   "plugins": [
-    { "id": "icyleaf.qalculator", "position": "bottom" }
+    { "id": "icyleaf.qalculator", "position": "bottom", "edgeMargin": 5 }
   ]
 }
 ```
 
-该值在每次唤出时重新读取，因此修改后下次打开即可生效，无需重启 shell。除上表四个取值之外的任何值都会回退为 `center`。
+这些值在每次唤出时重新读取，因此修改后下次打开即可生效，无需重启 shell。`position` 取上表四值之外的任何值都会回退为 `center`；`edgeMargin` 为非数字或负数时回退为 `5`。
 
 ---
 
@@ -167,7 +167,7 @@ rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/qalculator"
 
 | 文件            | 职责                                                                                             |
 | :-------------- | :----------------------------------------------------------------------------------------------- |
-| `manifest.json` | `kinds: ["overlay"]`、`activation: "on-demand"`、`keepLoaded: true`，以及 `position` 设置 schema。 |
+| `manifest.json` | `kinds: ["overlay"]`、`activation: "on-demand"`、`keepLoaded: true`，以及 `position`、`edgeMargin` 设置 schema。 |
 | `Overlay.qml`   | 覆盖层本体：输入框、实时答案、依赖提示、qalc 进程、剪贴板进程、依赖探测、设置读取与区块布局。     |
 | `HistoryList.qml` | 可滚动的历史列表，由覆盖层决定放在输入框上方或下方。                                            |
 | `HelpList.qml`  | 可滚动的语法速查列表，遵循同一放置规则。                                                          |
