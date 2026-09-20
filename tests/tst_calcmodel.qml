@@ -542,10 +542,23 @@ TestCase {
     compare(CalcModel.normalizePosition(42), "center")
   }
 
-  function test_layoutTopPinsTheInputNearTheTopGap() {
+  function test_edgeMarginUsesTenPercentOfThePanel() {
+    // 1000px panel -> 100px margin.
+    compare(CalcModel.edgeMargin(1000, 5), 100)
+    compare(CalcModel.edgeMargin(1080, 5), 108)
+  }
+
+  function test_edgeMarginNeverGoesBelowTheOuterGap() {
+    // A tiny panel would round to less than the gap; the gap wins.
+    compare(CalcModel.edgeMargin(40, 5), 5)
+    compare(CalcModel.edgeMargin(0, 5), 5)
+    compare(CalcModel.edgeMargin(undefined, 7), 7)
+  }
+
+  function test_layoutTopLeavesAnEdgeMarginAboveTheCard() {
     var fixture = layoutFixture({ position: "top" })
     var result = CalcModel.overlayLayout(fixture)
-    fuzzyCompare(result.cardTop, fixture.gapsOut, 0.0001)
+    fuzzyCompare(result.cardTop, CalcModel.edgeMargin(fixture.panelHeight, fixture.gapsOut), 0.0001)
     // The lower area sits below the input.
     verify(result.lowerY > result.inputY)
   }
@@ -556,11 +569,12 @@ TestCase {
     verify(top.lowerMaxHeight > center.lowerMaxHeight)
   }
 
-  function test_layoutBottomPinsTheInputNearTheBottomGap() {
+  function test_layoutBottomLeavesAnEdgeMarginBelowTheCard() {
     var fixture = layoutFixture({ position: "bottom" })
     var result = CalcModel.overlayLayout(fixture)
     var inputBottom = result.cardTop + result.inputY + fixture.inputHeight
-    fuzzyCompare(inputBottom, fixture.panelHeight - fixture.gapsOut - fixture.contentBottomInset, 0.0001)
+    var margin = CalcModel.edgeMargin(fixture.panelHeight, fixture.gapsOut)
+    fuzzyCompare(inputBottom, fixture.panelHeight - margin - fixture.contentBottomInset, 0.0001)
     // The lower area sits above the input.
     verify(result.lowerY < result.inputY)
   }
@@ -629,8 +643,8 @@ TestCase {
     var result = CalcModel.overlayLayout(layoutFixture({ position: "bottom", desiredLowerHeight: 10000 }))
     var fixture = layoutFixture({ position: "bottom", desiredLowerHeight: 10000 })
     fuzzyCompare(result.lowerMaxHeight, result.lowerHeight, 0.0001)
-    // The card is held between the two outer gaps.
-    fuzzyCompare(result.cardTop, fixture.gapsOut, 0.0001)
+    // The card is held against the top edge margin.
+    fuzzyCompare(result.cardTop, CalcModel.edgeMargin(fixture.panelHeight, fixture.gapsOut), 0.0001)
   }
 
   // ── Block offsets ────────────────────────────────────────────────────────

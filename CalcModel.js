@@ -270,6 +270,11 @@ function addHistoryEntry(entries, entry, limit) {
 var POSITIONS = ["top", "center", "bottom", "window"]
 var DEFAULT_POSITION = "center"
 
+// Fraction of the panel height left clear above "top" and below "bottom".
+// Flush against the edge looks cramped, so those two hold the card back by a
+// tenth of the screen (never less than the outer gap).
+var EDGE_MARGIN_RATIO = 0.10
+
 function normalizePosition(value) {
   var candidate = String(value === undefined || value === null ? "" : value)
   for (var i = 0; i < POSITIONS.length; i++) {
@@ -278,18 +283,24 @@ function normalizePosition(value) {
   return DEFAULT_POSITION
 }
 
+// Clear space above a "top" card and below a "bottom" card.
+function edgeMargin(panelHeight, gapsOut) {
+  return Math.max(numberOr(gapsOut, 0), Math.round(numberOr(panelHeight, 0) * EDGE_MARGIN_RATIO))
+}
+
 // Vertical geometry for the overlay, kept here so it is plain numbers in and
 // plain numbers out rather than a tangle of QML bindings.
 //
 // With `position: "center"` the input is pinned to the panel's centre and the
 // card grows downward, so a growing history list never moves the input. With
-// "top" the input sits just under the top gap; with "bottom" the input sits
-// just above the bottom gap and the lower area is placed *above* it instead;
-// with "window" the whole card is centred on the panel and the input sits at
-// its top. `inputY`, `noticeY` and `lowerY` are each block's offset from the
-// card's top edge, so the caller only has to place boxes. In every case the
-// lower area is capped by the room left before the card's outer edge would
-// leave the panel, and scrolls internally when its content is taller.
+// "top" the input sits just under the top edge margin; with "bottom" the input
+// sits just above the bottom edge margin and the lower area is placed *above*
+// it instead; with "window" the whole card is centred on the panel and the
+// input sits at its top. `inputY`, `noticeY` and `lowerY` are each block's
+// offset from the card's top edge, so the caller only has to place boxes. In
+// every case the lower area is capped by the room left before the card's outer
+// edge would leave the panel, and scrolls internally when its content is
+// taller.
 function overlayLayout(input) {
   if (!input || typeof input !== "object") input = {}
   var panelHeight = numberOr(input.panelHeight, 0)
@@ -305,25 +316,28 @@ function overlayLayout(input) {
   // Everything the card holds besides the lower area, including both content
   // insets and the gap the notice reserves.
   var fixedBlock = contentTopInset + inputHeight + contentSpacing + noticeBlock + contentBottomInset
-  // Tallest the card may be, leaving one outer gap top and bottom.
-  var available = Math.max(0, panelHeight - gapsOut * 2)
+
+  var pinned = position === "top" || position === "bottom"
+  var inset = pinned ? edgeMargin(panelHeight, gapsOut) : gapsOut
+  // Tallest the card may be, leaving the inset clear on both sides.
+  var available = Math.max(0, panelHeight - inset * 2)
 
   var cardTop = 0
   var lowerMaxHeight = 0
 
   if (position === "bottom") {
-    // The input's bottom edge is pinned to the bottom gap, so the lower area
+    // The input's bottom edge is pinned to the bottom margin, so the lower area
     // grows upward and its cap is everything the card does not need for the
     // fixed block.
     lowerMaxHeight = Math.max(0, available - fixedBlock)
   } else if (position === "top" || position === "window") {
-    // The card starts at the top gap (window then slides it to centre below);
-    // the lower area takes the room down to the bottom gap.
-    cardTop = gapsOut
+    // The card starts at the top margin (window then slides it to centre
+    // below); the lower area takes the room down to the bottom margin.
+    cardTop = inset
     lowerMaxHeight = Math.max(0, available - fixedBlock)
   } else {
     // Center: the input's centre sits on the panel's centre, clamped so the
-    // card never starts above the outer gap.
+    // card never starts below the outer gap.
     cardTop = Math.max(gapsOut, panelHeight / 2 - contentTopInset - inputHeight / 2)
     lowerMaxHeight = Math.max(0, panelHeight - gapsOut - cardTop - fixedBlock)
   }
@@ -332,10 +346,10 @@ function overlayLayout(input) {
   var cardHeight = Math.min(fixedBlock + lowerHeight, available)
 
   if (position === "bottom") {
-    cardTop = Math.max(gapsOut, panelHeight - gapsOut - cardHeight)
+    cardTop = Math.max(inset, panelHeight - inset - cardHeight)
   } else if (position === "window") {
     // Centre the whole card, then clamp so it never leaves the panel.
-    cardTop = Math.max(gapsOut, Math.min((panelHeight - cardHeight) / 2, panelHeight - gapsOut - cardHeight))
+    cardTop = Math.max(inset, Math.min((panelHeight - cardHeight) / 2, panelHeight - inset - cardHeight))
   } else if (position === "center") {
     // Keep the input centred when the card still fits under it; otherwise slide
     // the card up until its bottom reaches the bottom gap.
